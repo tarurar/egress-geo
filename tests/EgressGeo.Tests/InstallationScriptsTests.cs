@@ -9,7 +9,7 @@ public sealed class InstallationScriptsTests
     private static readonly string RepositoryRoot = FindRepositoryRoot();
 
     [TestMethod]
-    public async Task Install_publishes_a_launchable_application_to_XDG_data_home()
+    public async Task Install_publishes_framework_dependent_application_sidecars()
     {
         using var environment = new InstallationTestEnvironment();
 
@@ -23,10 +23,6 @@ public sealed class InstallationScriptsTests
             File.Exists(environment.ApplicationPath("geo.deps.json")));
         Assert.IsTrue(
             File.Exists(environment.ApplicationPath("geo.runtimeconfig.json")));
-        Assert.IsTrue(
-            File.Exists(environment.ApplicationPath("uninstall.sh")));
-        Assert.IsTrue(File.Exists(environment.LauncherPath));
-
         var publishArguments = await File.ReadAllLinesAsync(
             environment.DotnetLogPath);
         AssertContainsSequence(
@@ -38,6 +34,15 @@ public sealed class InstallationScriptsTests
             publishArguments,
             "--self-contained",
             "false");
+    }
+
+    [TestMethod]
+    public async Task Installed_launcher_forwards_without_using_the_checkout()
+    {
+        using var environment = new InstallationTestEnvironment();
+        Assert.AreEqual(
+            0,
+            (await environment.RunScript("install.sh")).ExitCode);
 
         var launched = await environment.Run(environment.LauncherPath, "probe");
 
@@ -45,7 +50,29 @@ public sealed class InstallationScriptsTests
         Assert.AreEqual("published geo <probe>\n", launched.Output);
         Assert.AreEqual(string.Empty, launched.Error);
         var launcher = await File.ReadAllTextAsync(environment.LauncherPath);
-        Assert.IsFalse(launcher.Contains(RepositoryRoot, StringComparison.Ordinal));
+        Assert.IsFalse(
+            launcher.Contains(RepositoryRoot, StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public async Task Installed_launcher_runs_the_built_geo_command()
+    {
+        using var environment = new InstallationTestEnvironment
+        {
+            PublishBuiltApplication = true,
+        };
+        Assert.AreEqual(
+            0,
+            (await environment.RunScript("install.sh")).ExitCode);
+
+        var result = await environment.Run(environment.LauncherPath, "--help");
+
+        Assert.AreEqual(0, result.ExitCode, result.Error);
+        Assert.IsTrue(
+            result.Output.Contains(
+                "Setup:\n  geo setup\n",
+                StringComparison.Ordinal));
+        Assert.AreEqual(string.Empty, result.Error);
     }
 
     [TestMethod]
@@ -73,6 +100,43 @@ public sealed class InstallationScriptsTests
     }
 
     [TestMethod]
+    public async Task Install_requires_the_launcher_directory_on_PATH()
+    {
+        using var environment = new InstallationTestEnvironment
+        {
+            IncludeLauncherDirectoryOnPath = false,
+        };
+
+        var result = await environment.RunScript("install.sh");
+
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(
+            $"geo install: add " +
+            $"{Path.GetDirectoryName(environment.LauncherPath)} " +
+            "to PATH before installing.\n",
+            result.Error);
+        Assert.IsFalse(File.Exists(environment.DotnetLogPath));
+        Assert.IsFalse(File.Exists(environment.LauncherPath));
+    }
+
+    [TestMethod]
+    public async Task Install_rejects_a_directory_at_the_launcher_path()
+    {
+        using var environment = new InstallationTestEnvironment();
+        Directory.CreateDirectory(environment.LauncherPath);
+
+        var result = await environment.RunScript("install.sh");
+
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(
+            $"geo install: launcher path is a directory: " +
+            $"{environment.LauncherPath}\n",
+            result.Error);
+        Assert.IsTrue(Directory.Exists(environment.LauncherPath));
+        Assert.IsFalse(File.Exists(environment.DotnetLogPath));
+    }
+
+    [TestMethod]
     public async Task Default_uninstall_removes_deployment_and_preserves_user_data()
     {
         using var environment = new InstallationTestEnvironment();
@@ -81,8 +145,7 @@ public sealed class InstallationScriptsTests
             (await environment.RunScript("install.sh")).ExitCode);
         environment.CreateUserDataAndUnits();
 
-        var result = await environment.Run(
-            environment.ApplicationPath("uninstall.sh"));
+        var result = await environment.RunScript("uninstall.sh");
 
         Assert.AreEqual(0, result.ExitCode, result.Error);
         Assert.AreEqual(string.Empty, result.Error);
@@ -105,8 +168,7 @@ public sealed class InstallationScriptsTests
         environment.CreateUserDataAndUnits();
         Assert.AreEqual(
             0,
-            (await environment.Run(
-                environment.ApplicationPath("uninstall.sh"))).ExitCode);
+            (await environment.RunScript("uninstall.sh")).ExitCode);
 
         var result = await environment.RunScript("uninstall.sh");
 
@@ -121,6 +183,25 @@ public sealed class InstallationScriptsTests
     }
 
     [TestMethod]
+    public async Task Uninstall_preserves_a_marker_mimicking_launcher()
+    {
+        using var environment = new InstallationTestEnvironment();
+        environment.WriteLauncher(
+            "#!/usr/bin/env bash\n" +
+            "# Managed by egress-geo install.sh\n" +
+            "exec another-command \"$@\"\n");
+
+        var result = await environment.RunScript("uninstall.sh");
+
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.IsTrue(File.Exists(environment.LauncherPath));
+        Assert.IsTrue(
+            result.Error.Contains(
+                "Preserved unrecognized launcher:",
+                StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public async Task Purge_without_exact_confirmation_removes_nothing()
     {
         using var environment = new InstallationTestEnvironment();
@@ -129,8 +210,8 @@ public sealed class InstallationScriptsTests
             (await environment.RunScript("install.sh")).ExitCode);
         environment.CreateUserDataAndUnits();
 
-        var result = await environment.RunWithInput(
-            environment.ApplicationPath("uninstall.sh"),
+        var result = await environment.RunScriptWithInput(
+            "uninstall.sh",
             "no\n",
             "--purge");
 
@@ -158,8 +239,8 @@ public sealed class InstallationScriptsTests
             (await environment.RunScript("install.sh")).ExitCode);
         environment.CreateUserDataAndUnits();
 
-        var result = await environment.RunWithInput(
-            environment.ApplicationPath("uninstall.sh"),
+        var result = await environment.RunScriptWithInput(
+            "uninstall.sh",
             "PURGE\n",
             "--purge");
 
@@ -209,7 +290,8 @@ public sealed class InstallationScriptsTests
             "/usr/bin/bash",
             "-n",
             Path.Combine(RepositoryRoot, "scripts", "install.sh"),
-            Path.Combine(RepositoryRoot, "scripts", "uninstall.sh"));
+            Path.Combine(RepositoryRoot, "scripts", "uninstall.sh"),
+            Path.Combine(RepositoryRoot, "scripts", "paths.sh"));
 
         Assert.AreEqual(0, result.ExitCode, result.Error);
         Assert.AreEqual(string.Empty, result.Output);
@@ -266,6 +348,11 @@ public sealed class InstallationScriptsTests
 
             [[ -n $output ]]
             mkdir -p -- "$output"
+            if [[ -n ${FAKE_PUBLISH_SOURCE:-} ]]; then
+              cp -a -- "$FAKE_PUBLISH_SOURCE/." "$output/"
+              exit 0
+            fi
+
             printf '%s\n' '#!/usr/bin/env bash' > "$output/geo"
             printf '%s\n' 'printf '\''published geo'\''' >> "$output/geo"
             printf '%s\n' 'printf '\'' <%s>'\'' "$@"' >> "$output/geo"
@@ -278,7 +365,7 @@ public sealed class InstallationScriptsTests
 
         private readonly string rootPath = Path.Combine(
             Path.GetTempPath(),
-            $"egress-geo-install-{Guid.NewGuid():N}");
+            $"egress geo install {Guid.NewGuid():N}");
 
         public InstallationTestEnvironment()
         {
@@ -299,17 +386,21 @@ public sealed class InstallationScriptsTests
             }
         }
 
-        public string HomePath => Path.Combine(rootPath, "home");
+        public string HomePath => Path.Combine(rootPath, "test home");
 
-        public string DataHomePath => Path.Combine(rootPath, "xdg-data");
+        public string DataHomePath => Path.Combine(rootPath, "xdg data");
 
-        public string ConfigHomePath => Path.Combine(rootPath, "xdg-config");
+        public string ConfigHomePath => Path.Combine(rootPath, "xdg config");
 
-        public string CacheHomePath => Path.Combine(rootPath, "xdg-cache");
+        public string CacheHomePath => Path.Combine(rootPath, "xdg cache");
 
-        public string ToolsPath => Path.Combine(rootPath, "tools");
+        public string ToolsPath => Path.Combine(rootPath, "test tools");
 
         public string DotnetLogPath => Path.Combine(rootPath, "dotnet.log");
+
+        public bool IncludeLauncherDirectoryOnPath { get; init; } = true;
+
+        public bool PublishBuiltApplication { get; init; }
 
         public string LauncherPath => Path.Combine(
             HomePath,
@@ -373,6 +464,9 @@ public sealed class InstallationScriptsTests
             WriteFile(UpdateTimerPath, "timer");
         }
 
+        public void WriteLauncher(string content) =>
+            WriteFile(LauncherPath, content);
+
         public Task<ProcessResult> RunScript(
             string scriptName,
             params string[] arguments) =>
@@ -391,20 +485,41 @@ public sealed class InstallationScriptsTests
                 [Path.Combine(RepositoryRoot, "scripts", scriptName),
                     .. arguments]);
 
-        public async Task<ProcessResult> Run(
+        public Task<ProcessResult> Run(
             string executable,
             params string[] arguments) =>
-            await RunProcess(executable, null, arguments);
+            RunProcess(executable, null, arguments);
 
-        public async Task<ProcessResult> RunWithInput(
+        public Task<ProcessResult> RunWithInput(
             string executable,
             string input,
             params string[] arguments) =>
-            await RunProcess(executable, input, arguments);
+            RunProcess(executable, input, arguments);
 
         private async Task<ProcessResult> RunProcess(
             string executable,
             string? input,
+            string[] arguments)
+        {
+            using var process = Process.Start(
+                CreateStartInfo(executable, arguments))!;
+            if (input is not null)
+            {
+                await process.StandardInput.WriteAsync(input);
+            }
+
+            process.StandardInput.Close();
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            return new ProcessResult(
+                process.ExitCode,
+                await output,
+                await error);
+        }
+
+        private ProcessStartInfo CreateStartInfo(
+            string executable,
             string[] arguments)
         {
             var startInfo = new ProcessStartInfo
@@ -420,31 +535,29 @@ public sealed class InstallationScriptsTests
                 startInfo.ArgumentList.Add(argument);
             }
 
+            ConfigureEnvironment(startInfo);
+            return startInfo;
+        }
+
+        private void ConfigureEnvironment(ProcessStartInfo startInfo)
+        {
             startInfo.Environment.Clear();
             startInfo.Environment["HOME"] = HomePath;
             startInfo.Environment["XDG_CONFIG_HOME"] = ConfigHomePath;
             startInfo.Environment["XDG_DATA_HOME"] = DataHomePath;
             startInfo.Environment["XDG_CACHE_HOME"] = CacheHomePath;
             startInfo.Environment["FAKE_DOTNET_LOG"] = DotnetLogPath;
-            startInfo.Environment["PATH"] =
-                $"{ToolsPath}:{Path.GetDirectoryName(LauncherPath)}:" +
-                "/usr/bin:/bin";
-            startInfo.Environment["LC_ALL"] = "C";
-
-            using var process = Process.Start(startInfo)!;
-            if (input is not null)
+            if (PublishBuiltApplication)
             {
-                await process.StandardInput.WriteAsync(input);
+                startInfo.Environment["FAKE_PUBLISH_SOURCE"] =
+                    AppContext.BaseDirectory;
             }
 
-            process.StandardInput.Close();
-            var output = process.StandardOutput.ReadToEndAsync();
-            var error = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            return new ProcessResult(
-                process.ExitCode,
-                await output,
-                await error);
+            var binaryDirectory = Path.GetDirectoryName(LauncherPath);
+            startInfo.Environment["PATH"] = IncludeLauncherDirectoryOnPath
+                ? $"{ToolsPath}:{binaryDirectory}:/usr/bin:/bin"
+                : $"{ToolsPath}:/usr/bin:/bin";
+            startInfo.Environment["LC_ALL"] = "C";
         }
 
         public void Dispose() => Directory.Delete(rootPath, recursive: true);

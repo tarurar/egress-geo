@@ -25,9 +25,9 @@ jobs:
 
       - name: Validate shell entry points
         run: |
-          bash -n scripts/install.sh scripts/uninstall.sh
+          bash -n scripts/install.sh scripts/uninstall.sh scripts/paths.sh
           if command -v shellcheck >/dev/null 2>&1; then
-            shellcheck scripts/install.sh scripts/uninstall.sh
+            shellcheck -x scripts/install.sh scripts/uninstall.sh
           fi
 
       - name: Restore locked dependencies
@@ -54,4 +54,6 @@ jobs:
           --output artifacts/publish
 
       - name: Verify command artifact
-        run: test -x artifacts/publish/geo
+        run: |
+          test -x artifacts/publish/geo
+          artifacts/publish/geo --help >/dev/null

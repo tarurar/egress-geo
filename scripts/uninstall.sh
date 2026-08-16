@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-fail() {
-  printf 'geo uninstall: %s\n' "$1" >&2
-  exit 1
-}
+script_directory=$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
+  pwd
+)
+# shellcheck source=scripts/paths.sh
+source "$script_directory/paths.sh"
+egress_geo_resolve_paths uninstall
 
 purge=false
 case $# in
   0) ;;
   1)
-    [[ $1 == '--purge' ]] || fail 'unknown arguments.'
+    [[ $1 == '--purge' ]] || egress_geo_fail 'unknown arguments.'
     purge=true
     ;;
-  *) fail 'unknown arguments.' ;;
+  *) egress_geo_fail 'unknown arguments.' ;;
 esac
 
 if $purge; then
@@ -28,72 +31,58 @@ if $purge; then
   fi
 fi
 
-home=${HOME:-}
-[[ $home == /* ]] || fail 'HOME must be an absolute path.'
-
-config_home=${XDG_CONFIG_HOME:-"$home/.config"}
-data_home=${XDG_DATA_HOME:-"$home/.local/share"}
-cache_home=${XDG_CACHE_HOME:-"$home/.cache"}
-[[ $config_home == /* ]] ||
-  fail 'XDG_CONFIG_HOME must be an absolute path.'
-[[ $data_home == /* ]] || fail 'XDG_DATA_HOME must be an absolute path.'
-[[ $cache_home == /* ]] || fail 'XDG_CACHE_HOME must be an absolute path.'
-
-application_root="$data_home/egress-geo"
-application_directory="$application_root/app"
-configuration_directory="$config_home/egress-geo"
-cache_directory="$cache_home/egress-geo"
-binary_directory="$home/.local/bin"
-launcher_path="$binary_directory/geo"
-unit_directory="$config_home/systemd/user"
-update_service="$unit_directory/egress-geo-update.service"
-update_timer="$unit_directory/egress-geo-update.timer"
-enabled_timer="$unit_directory/timers.target.wants/egress-geo-update.timer"
-
-remove_file() {
-  local description=$1
-  local path=$2
+remove_path() {
+  local kind=$1
+  local description=$2
+  local path=$3
 
   if [[ -e $path || -L $path ]]; then
-    rm -f -- "$path"
+    case $kind in
+      file) rm -f -- "$path" ;;
+      directory) rm -rf -- "$path" ;;
+      *) egress_geo_fail "unknown removal kind: $kind" ;;
+    esac
     printf 'Removed %s: %s\n' "$description" "$path"
   else
     printf 'Already absent %s: %s\n' "$description" "$path"
   fi
 }
 
-remove_directory() {
-  local description=$1
-  local path=$2
-
-  if [[ -e $path || -L $path ]]; then
-    rm -rf -- "$path"
-    printf 'Removed %s: %s\n' "$description" "$path"
-  else
-    printf 'Already absent %s: %s\n' "$description" "$path"
-  fi
-}
-
-if [[ -f $launcher_path ]] &&
-  grep -Fqx '# Managed by egress-geo install.sh' "$launcher_path"; then
-  remove_file 'geo launcher' "$launcher_path"
-elif [[ -e $launcher_path || -L $launcher_path ]]; then
-  printf 'Preserved unrecognized launcher: %s\n' "$launcher_path" >&2
-else
-  printf 'Already absent geo launcher: %s\n' "$launcher_path"
+expected_launcher=$(
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '%s\n' '# Managed by egress-geo install.sh'
+  printf 'exec %q "$@"\n' "$geo_application_directory/geo"
+)
+launcher_contents=''
+if [[ -f $geo_launcher_path ]]; then
+  launcher_contents=$(< "$geo_launcher_path")
 fi
 
-remove_file 'update service' "$update_service"
-remove_file 'update timer' "$update_timer"
-remove_file 'enabled update timer' "$enabled_timer"
-remove_directory 'geo application' "$application_directory"
+if [[ $launcher_contents == "$expected_launcher" ]]; then
+  remove_path file 'geo launcher' "$geo_launcher_path"
+elif [[ -e $geo_launcher_path || -L $geo_launcher_path ]]; then
+  printf 'Preserved unrecognized launcher: %s\n' \
+    "$geo_launcher_path" >&2
+else
+  printf 'Already absent geo launcher: %s\n' "$geo_launcher_path"
+fi
+
+update_service="$geo_unit_directory/egress-geo-update.service"
+update_timer="$geo_unit_directory/egress-geo-update.timer"
+enabled_timer="$geo_unit_directory/timers.target.wants/egress-geo-update.timer"
+remove_path file 'update service' "$update_service"
+remove_path file 'update timer' "$update_timer"
+remove_path file 'enabled update timer' "$enabled_timer"
+remove_path directory 'geo application' "$geo_application_directory"
 
 if $purge; then
-  remove_directory 'user configuration' "$configuration_directory"
-  remove_directory 'user data' "$application_root"
-  remove_directory 'user cache' "$cache_directory"
+  remove_path directory 'user configuration' \
+    "$geo_configuration_directory"
+  remove_path directory 'user data' "$geo_application_root"
+  remove_path directory 'user cache' "$geo_cache_directory"
 else
-  printf 'Preserved user configuration: %s\n' "$configuration_directory"
-  printf 'Preserved user data: %s\n' "$application_root"
-  printf 'Preserved user cache: %s\n' "$cache_directory"
+  printf 'Preserved user configuration: %s\n' \
+    "$geo_configuration_directory"
+  printf 'Preserved user data: %s\n' "$geo_application_root"
+  printf 'Preserved user cache: %s\n' "$geo_cache_directory"
 fi

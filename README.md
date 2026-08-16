@@ -47,7 +47,8 @@ Install or repair `geo` from a source checkout with the .NET 10 SDK available:
 The installer publishes a framework-dependent Linux x86-64 application to
 `$XDG_DATA_HOME/egress-geo/app`, or
 `$HOME/.local/share/egress-geo/app` when `XDG_DATA_HOME` is unset. It installs
-the launcher at `$HOME/.local/bin/geo`; that directory must be on `PATH`.
+the launcher at `$HOME/.local/bin/geo`; installation stops before publishing
+unless that directory is already on `PATH`.
 The launcher refers only to the published application, so the source checkout
 is not needed to run the installed command. Re-running the installer replaces
 stale publish sidecars and repairs the launcher without duplicating either.
@@ -56,10 +57,10 @@ Until GeoLite onboarding is implemented and run, lookup exits with the exact
 next-step message `Run: geo setup`. The onboarding wizard is tracked
 separately.
 
-The installed uninstaller is kept with the application. Run it with:
+Run the idempotent uninstaller from the source checkout with:
 
 ```console
-"${XDG_DATA_HOME:-$HOME/.local/share}/egress-geo/app/uninstall.sh"
+./scripts/uninstall.sh
 ```
 
 Default uninstall removes the launcher, published application, and known
