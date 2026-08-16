@@ -17,5 +17,6 @@ internal abstract record LookupOutcome
     internal sealed record PublicAddressUnavailable(IpFamily Family) :
         LookupOutcome;
 
-    internal sealed record DatabaseUnavailable : LookupOutcome;
+    internal sealed record DatabaseUnavailable(
+        DiscoveredPublicIp? PublicIp) : LookupOutcome;
 }

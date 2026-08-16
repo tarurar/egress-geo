@@ -14,7 +14,7 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
         CancellationToken cancellationToken) =>
         GeoCommand.Parse(arguments) switch
         {
-            GeoCommand.Lookup lookup => RunLookup(
+            GeoCommand.Lookup lookup => RunConfiguredLookup(
                 lookup.OutputFormat,
                 cancellationToken),
             GeoCommand.Help => Write(CommandLineOutput.Help()),
@@ -23,27 +23,11 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
             _ => throw new InvalidOperationException("Unknown geo command."),
         };
 
-    private ValueTask<int> RunLookup(
-        LookupOutputFormat outputFormat,
-        CancellationToken cancellationToken)
-    {
-        if (!dependencies.Geolocation.IsAvailable)
-        {
-            var unavailable = new LookupOutcome.DatabaseUnavailable();
-            var outcome = new LiveLookupOutcome(
-                dependencies.TimeProvider.GetUtcNow(),
-                unavailable,
-                unavailable);
-            return Write(Render(outcome, outputFormat));
-        }
-
-        return RunConfiguredLookup(outputFormat, cancellationToken);
-    }
-
     private async ValueTask<int> RunConfiguredLookup(
         LookupOutputFormat outputFormat,
         CancellationToken cancellationToken)
     {
+        var geolocationAvailable = dependencies.Geolocation.IsAvailable;
         using var liveDeadline = new CancellationTokenSource(
             LiveDiscoveryBudget,
             dependencies.TimeProvider);
@@ -62,12 +46,19 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
             cancellationToken).AsTask();
 
         await Task.WhenAll(ipv4Task, ipv6Task);
-        var outcome = new LiveLookupOutcome(
+        var liveOutcome = new LookupResult(
             dependencies.TimeProvider.GetUtcNow(),
-            Locate(await ipv4Task),
-            Locate(await ipv6Task));
+            Locate(await ipv4Task, geolocationAvailable),
+            Locate(await ipv6Task, geolocationAvailable),
+            new CacheUsage.None());
+        var cachedSnapshot = await dependencies.Cache.Read(cancellationToken);
+        var decision = CacheDecision.Decide(liveOutcome, cachedSnapshot);
+        if (decision.SnapshotToWrite is { } snapshot)
+        {
+            await dependencies.Cache.Write(snapshot, cancellationToken);
+        }
 
-        return await Write(Render(outcome, outputFormat));
+        return await Write(Render(decision.Outcome, outputFormat));
     }
 
     private async ValueTask<PublicIpDiscovery> Discover(
@@ -163,8 +154,25 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
             ? DiscoveredPublicIp.Parse(received.Content, family, provider)
             : null;
 
-    private LookupOutcome Locate(PublicIpDiscovery discovery) =>
-        discovery switch
+    private LookupOutcome Locate(
+        PublicIpDiscovery discovery,
+        bool geolocationAvailable)
+    {
+        if (!geolocationAvailable)
+        {
+            return discovery switch
+            {
+                PublicIpDiscovery.Found found =>
+                    new LookupOutcome.DatabaseUnavailable(found.PublicIp),
+                PublicIpDiscovery.Unavailable =>
+                    new LookupOutcome.DatabaseUnavailable(null),
+                _ => throw new InvalidOperationException(
+                    $"Unknown public IP discovery: " +
+                    discovery.GetType().Name),
+            };
+        }
+
+        return discovery switch
         {
             PublicIpDiscovery.Found found => LookupDecision.Decide(
                 found.PublicIp,
@@ -176,9 +184,10 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
                 $"Unknown public IP discovery: " +
                 discovery.GetType().Name),
         };
+    }
 
     private static CommandResult Render(
-        LiveLookupOutcome outcome,
+        LookupResult outcome,
         LookupOutputFormat outputFormat) =>
         outputFormat switch
         {

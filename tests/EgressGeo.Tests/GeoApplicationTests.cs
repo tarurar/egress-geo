@@ -52,6 +52,99 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
+    public async Task Lookup_stores_successful_dual_stack_snapshot()
+    {
+        var observedAt = new DateTimeOffset(
+            2026,
+            8,
+            16,
+            12,
+            34,
+            56,
+            TimeSpan.Zero);
+        var ipv4Address = IPAddress.Parse("203.0.113.7");
+        var ipv6Address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new DualStackPublicIpClient(
+            ipv4Address.ToString(),
+            ipv6Address.ToString());
+        var geolocation = new DualStackGeolocationDatabase(
+            ipv4Address,
+            new GeolocationLookup.Found("Manama", "BH"),
+            ipv6Address,
+            new GeolocationLookup.Found("London", "GB"));
+        var cache = new FakeEgressSnapshotCache();
+
+        var result = await RunApplication(
+            [],
+            publicIp,
+            geolocation,
+            new FakeTimeProvider(observedAt),
+            cache);
+
+        Assert.AreEqual(2, result.ExitCode);
+        Assert.IsNotNull(cache.WrittenSnapshot);
+        Assert.AreEqual(observedAt, cache.WrittenSnapshot.ObservedAt);
+        Assert.HasCount(2, cache.WrittenSnapshot.Families);
+        Assert.AreEqual(
+            CachedFamily(
+                "IPv4",
+                "203.0.113.7",
+                "Manama",
+                "BH",
+                "ipify"),
+            cache.WrittenSnapshot.Families[0]);
+        Assert.AreEqual(
+            CachedFamily(
+                "IPv6",
+                "2001:db8::7",
+                "London",
+                "GB",
+                "ipify"),
+            cache.WrittenSnapshot.Families[1]);
+    }
+
+    [TestMethod]
+    public async Task Lookup_preserves_complete_snapshot_after_IPv4_only_success()
+    {
+        var observedAt = new DateTimeOffset(
+            2026,
+            8,
+            16,
+            12,
+            34,
+            56,
+            TimeSpan.Zero);
+        var address = IPAddress.Parse("203.0.113.7");
+        var cache = new FakeEgressSnapshotCache(
+            CachedSnapshot(
+                observedAt - TimeSpan.FromHours(1),
+                CachedFamily(
+                    "IPv4",
+                    "198.51.100.5",
+                    "London",
+                    "GB",
+                    "ident.me"),
+                CachedFamily(
+                    "IPv6",
+                    "2001:db8::5",
+                    "London",
+                    "GB",
+                    "ident.me")));
+
+        var result = await RunApplication(
+            [],
+            new FakePublicIpClient(address.ToString()),
+            new FakeGeolocationDatabase(
+                address,
+                new GeolocationLookup.Found("Manama", "BH")),
+            new FakeTimeProvider(observedAt),
+            cache);
+
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.IsNull(cache.WrittenSnapshot);
+    }
+
+    [TestMethod]
     public async Task Lookup_prints_separate_cities_without_leak_warning()
     {
         var ipv4Address = IPAddress.Parse("203.0.113.7");
@@ -345,6 +438,323 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
+    public async Task Json_lookup_uses_recent_snapshot_when_live_discovery_fails()
+    {
+        var currentTime = new DateTimeOffset(
+            2026,
+            8,
+            16,
+            12,
+            34,
+            56,
+            TimeSpan.Zero);
+        var cachedAt = currentTime - TimeSpan.FromHours(1);
+        var cache = new FakeEgressSnapshotCache(
+            CachedSnapshot(
+                cachedAt,
+                CachedFamily(
+                    "IPv4",
+                    "203.0.113.7",
+                    "Manama",
+                    "BH",
+                    "ipify"),
+                CachedFamily(
+                    "IPv6",
+                    "2001:db8::7",
+                    "Manama",
+                    "BH",
+                    "ident.me")));
+
+        var result = await RunApplication(
+            ["--json"],
+            OrderedPublicIpClient.ForIPv4(
+                _ => UnavailableResponse(),
+                _ => UnavailableResponse()),
+            new AvailableUnexpectedGeolocationDatabase(),
+            new FakeTimeProvider(currentTime),
+            cache);
+
+        Assert.AreEqual(3, result.ExitCode);
+        Assert.AreEqual(string.Empty, result.Error);
+        using var document = JsonDocument.Parse(result.Output);
+        var root = document.RootElement;
+        Assert.AreEqual("cached", root.GetProperty("status").GetString());
+        Assert.AreEqual(
+            cachedAt,
+            root.GetProperty("observedAt").GetDateTimeOffset());
+        Assert.IsTrue(root.GetProperty("cached").GetBoolean());
+        Assert.AreEqual(
+            3600,
+            root.GetProperty("cacheAgeSeconds").GetInt64());
+        Assert.AreEqual(0, root.GetProperty("warnings").GetArrayLength());
+        var families = root.GetProperty("families");
+        Assert.AreEqual(2, families.GetArrayLength());
+        AssertFamily(
+            families[0],
+            "IPv4",
+            "203.0.113.7",
+            "Manama",
+            "BH",
+            "ipify");
+        AssertFamily(
+            families[1],
+            "IPv6",
+            "2001:db8::7",
+            "Manama",
+            "BH",
+            "ident.me");
+    }
+
+    [TestMethod]
+    public async Task Lookup_marks_cached_country_mismatch_and_exits_three()
+    {
+        var currentTime = new DateTimeOffset(
+            2026,
+            8,
+            16,
+            12,
+            34,
+            56,
+            TimeSpan.Zero);
+        var cache = new FakeEgressSnapshotCache(
+            CachedSnapshot(
+                currentTime - TimeSpan.FromHours(1),
+                CachedFamily(
+                    "IPv4",
+                    "203.0.113.7",
+                    "Manama",
+                    "BH",
+                    "ipify"),
+                CachedFamily(
+                    "IPv6",
+                    "2001:db8::7",
+                    "London",
+                    "GB",
+                    "ident.me")));
+
+        var result = await RunApplication(
+            [],
+            OrderedPublicIpClient.ForIPv4(
+                _ => UnavailableResponse(),
+                _ => UnavailableResponse()),
+            new AvailableUnexpectedGeolocationDatabase(),
+            new FakeTimeProvider(currentTime),
+            cache);
+
+        Assert.AreEqual(3, result.ExitCode);
+        Assert.AreEqual(
+            "CACHED EGRESS SNAPSHOT (age 1 hour): live public-address " +
+            "discovery is unavailable.\n" +
+            "WARNING: Possible VPN leak: IPv4 and IPv6 egress resolve " +
+            "to different countries.\n" +
+            "Approximate location (IPv4): 🇧🇭 Manama, BH\n" +
+            "Public address (IPv4): 203.0.113.7\n" +
+            "Approximate location (IPv6): 🇬🇧 London, GB\n" +
+            "Public address (IPv6): 2001:db8::7\n",
+            result.Output);
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_reuses_cached_location_for_exact_live_address()
+    {
+        var currentTime = new DateTimeOffset(
+            2026,
+            8,
+            16,
+            12,
+            34,
+            56,
+            TimeSpan.Zero);
+        var address = IPAddress.Parse("203.0.113.7");
+        var cache = new FakeEgressSnapshotCache(
+            CachedSnapshot(
+                currentTime - TimeSpan.FromHours(2),
+                CachedFamily(
+                    "IPv4",
+                    address.ToString(),
+                    "Manama",
+                    "BH",
+                    "ident.me")));
+        var publicIp = new FakePublicIpClient(address.ToString());
+        var geolocation = new FakeGeolocationDatabase(
+            address,
+            new GeolocationLookup.LocationUnavailable());
+
+        var result = await RunApplication(
+            [],
+            publicIp,
+            geolocation,
+            new FakeTimeProvider(currentTime),
+            cache);
+
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.AreEqual(
+            "CACHED LOCATION (age 2 hours): reused for an exact live " +
+            "public-address match.\n" +
+            "Approximate location: 🇧🇭 Manama, BH\n" +
+            "Public address (IPv4): 203.0.113.7\n",
+            result.Output);
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_does_not_reuse_location_for_different_live_address()
+    {
+        var currentTime = new DateTimeOffset(
+            2026,
+            8,
+            16,
+            12,
+            34,
+            56,
+            TimeSpan.Zero);
+        var liveAddress = IPAddress.Parse("203.0.113.7");
+        var cache = new FakeEgressSnapshotCache(
+            CachedSnapshot(
+                currentTime - TimeSpan.FromHours(2),
+                CachedFamily(
+                    "IPv4",
+                    "198.51.100.5",
+                    "London",
+                    "GB",
+                    "ident.me")));
+        var publicIp = new FakePublicIpClient(liveAddress.ToString());
+        var geolocation = new FakeGeolocationDatabase(
+            liveAddress,
+            new GeolocationLookup.LocationUnavailable());
+
+        var result = await RunApplication(
+            [],
+            publicIp,
+            geolocation,
+            new FakeTimeProvider(currentTime),
+            cache);
+
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(string.Empty, result.Output);
+        Assert.AreEqual(
+            "Approximate location unavailable for IPv4 203.0.113.7: " +
+            "GeoLite2 City has no country for this address.\n",
+            result.Error);
+        Assert.IsNull(cache.WrittenSnapshot);
+    }
+
+    [TestMethod]
+    public async Task Lookup_does_not_replace_snapshot_with_reused_location()
+    {
+        var currentTime = new DateTimeOffset(
+            2026,
+            8,
+            16,
+            12,
+            34,
+            56,
+            TimeSpan.Zero);
+        var ipv4Address = IPAddress.Parse("203.0.113.7");
+        var ipv6Address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new DualStackPublicIpClient(
+            ipv4Address.ToString(),
+            ipv6Address.ToString());
+        var geolocation = new DualStackGeolocationDatabase(
+            ipv4Address,
+            new GeolocationLookup.Found("Manama", "BH"),
+            ipv6Address,
+            new GeolocationLookup.LocationUnavailable());
+        var cache = new FakeEgressSnapshotCache(
+            CachedSnapshot(
+                currentTime - TimeSpan.FromHours(2),
+                CachedFamily(
+                    "IPv6",
+                    ipv6Address.ToString(),
+                    "London",
+                    "GB",
+                    "ident.me")));
+
+        var result = await RunApplication(
+            [],
+            publicIp,
+            geolocation,
+            new FakeTimeProvider(currentTime),
+            cache);
+
+        Assert.AreEqual(2, result.ExitCode);
+        Assert.IsNull(cache.WrittenSnapshot);
+    }
+
+    [TestMethod]
+    public async Task Lookup_uses_snapshot_at_exact_24_hour_boundary()
+    {
+        var currentTime = new DateTimeOffset(
+            2026,
+            8,
+            16,
+            12,
+            34,
+            56,
+            TimeSpan.Zero);
+        var cache = new FakeEgressSnapshotCache(
+            CachedSnapshot(
+                currentTime - TimeSpan.FromHours(24),
+                CachedFamily(
+                    "IPv4",
+                    "203.0.113.7",
+                    "Manama",
+                    "BH",
+                    "ipify")));
+
+        var result = await RunApplication(
+            ["--json"],
+            new RecordingUnavailablePublicIpClient(),
+            new AvailableUnexpectedGeolocationDatabase(),
+            new FakeTimeProvider(currentTime),
+            cache);
+
+        Assert.AreEqual(3, result.ExitCode);
+        using var document = JsonDocument.Parse(result.Output);
+        Assert.AreEqual(
+            24 * 60 * 60,
+            document.RootElement
+                .GetProperty("cacheAgeSeconds")
+                .GetInt64());
+    }
+
+    [TestMethod]
+    public async Task Lookup_rejects_snapshot_older_than_24_hours()
+    {
+        var currentTime = new DateTimeOffset(
+            2026,
+            8,
+            16,
+            12,
+            34,
+            56,
+            TimeSpan.Zero);
+        var cache = new FakeEgressSnapshotCache(
+            CachedSnapshot(
+                currentTime - TimeSpan.FromHours(24) - TimeSpan.FromSeconds(1),
+                CachedFamily(
+                    "IPv4",
+                    "203.0.113.7",
+                    "Manama",
+                    "BH",
+                    "ipify")));
+
+        var result = await RunApplication(
+            [],
+            new RecordingUnavailablePublicIpClient(),
+            new AvailableUnexpectedGeolocationDatabase(),
+            new FakeTimeProvider(currentTime),
+            cache);
+
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(string.Empty, result.Output);
+        Assert.AreEqual(
+            "Public IPv4 and IPv6 addresses are unavailable.\n",
+            result.Error);
+    }
+
+    [TestMethod]
     public async Task Lookup_accepts_surrounding_whitespace_from_ipify()
     {
         var address = IPAddress.Parse("203.0.113.7");
@@ -443,11 +853,14 @@ public sealed class GeoApplicationTests
     [TestMethod]
     public async Task Lookup_points_to_setup_when_database_is_unavailable()
     {
+        var publicIp = new RecordingUnavailablePublicIpClient();
+
         var result = await RunApplication(
             [],
-            new UnexpectedPublicIpClient(),
+            publicIp,
             new UnavailableGeolocationDatabase());
 
+        Assert.IsTrue(publicIp.WasRequested);
         Assert.AreEqual(1, result.ExitCode);
         Assert.AreEqual(string.Empty, result.Output);
         Assert.AreEqual(
@@ -613,17 +1026,64 @@ public sealed class GeoApplicationTests
             result.Error);
     }
 
+    private static CachedEgressSnapshot CachedSnapshot(
+        DateTimeOffset observedAt,
+        params CachedEgressFamily[] observedFamilies)
+    {
+        var families = observedFamilies.ToList();
+        var template = observedFamilies.First();
+        foreach (var family in new[] { "IPv4", "IPv6" })
+        {
+            if (families.All(candidate => candidate.Family != family))
+            {
+                var address = family == "IPv4"
+                    ? "198.51.100.254"
+                    : "2001:db8::ffff";
+                families.Add(
+                    CachedFamily(
+                        family,
+                        address,
+                        template.ApproximateCity,
+                        template.CountryCode,
+                        template.DiscoverySource));
+            }
+        }
+
+        return CachedEgressSnapshot.Create(
+                observedAt,
+                families.Cast<CachedEgressFamily?>().ToArray()) ??
+            throw new AssertFailedException(
+                "The test cache snapshot must be valid and complete.");
+    }
+
+    private static CachedEgressFamily CachedFamily(
+        string family,
+        string? address = null,
+        string? approximateCity = null,
+        string? countryCode = null,
+        string? discoverySource = null) =>
+        CachedEgressFamily.Create(
+            family,
+            address,
+            approximateCity,
+            countryCode,
+            discoverySource) ??
+        throw new AssertFailedException(
+            $"The cached {family} test outcome must be valid.");
+
     private static async ValueTask<ApplicationResult> RunApplication(
         string[] arguments,
         IPublicIpClient publicIp,
         IGeolocationDatabase geolocation,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IEgressSnapshotCache? cache = null)
     {
         var output = new StringWriter();
         var error = new StringWriter();
         var dependencies = new GeoApplicationDependencies(
             publicIp,
             geolocation,
+            cache ?? new FakeEgressSnapshotCache(),
             output,
             error,
             timeProvider ?? TimeProvider.System);
@@ -926,6 +1386,29 @@ public sealed class GeoApplicationTests
                 "This command must not perform an HTTP request.");
     }
 
+    private sealed class RecordingUnavailablePublicIpClient : IPublicIpClient
+    {
+        internal bool WasRequested { get; private set; }
+
+        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+            CancellationToken cancellationToken) => Unavailable();
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+            CancellationToken cancellationToken) => Unavailable();
+
+        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+            CancellationToken cancellationToken) => Unavailable();
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+            CancellationToken cancellationToken) => Unavailable();
+
+        private ValueTask<PublicIpResponse> Unavailable()
+        {
+            WasRequested = true;
+            return UnavailableResponse();
+        }
+    }
+
     private sealed class UnexpectedGeolocationDatabase : IGeolocationDatabase
     {
         public bool IsAvailable =>
@@ -954,5 +1437,23 @@ public sealed class GeoApplicationTests
         public GeolocationLookup Lookup(IPAddress address) =>
             throw new AssertFailedException(
                 "Address discovery failure must precede GeoLite lookup.");
+    }
+
+    private sealed class FakeEgressSnapshotCache(
+        CachedEgressSnapshot? snapshot = null) : IEgressSnapshotCache
+    {
+        internal CachedEgressSnapshot? WrittenSnapshot { get; private set; }
+
+        public ValueTask<CachedEgressSnapshot?> Read(
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(snapshot);
+
+        public ValueTask Write(
+            CachedEgressSnapshot snapshot,
+            CancellationToken cancellationToken)
+        {
+            WrittenSnapshot = snapshot;
+            return ValueTask.CompletedTask;
+        }
     }
 }

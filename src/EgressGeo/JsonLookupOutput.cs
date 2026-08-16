@@ -7,7 +7,7 @@ internal static class JsonLookupOutput
     private static readonly JsonSerializerOptions SerializerOptions =
         new(JsonSerializerDefaults.Web);
 
-    internal static CommandResult Render(LiveLookupOutcome outcome)
+    internal static CommandResult Render(LookupResult outcome)
     {
         var families = new[] { outcome.IPv4, outcome.IPv6 }
             .Select(CreateFamily)
@@ -16,9 +16,9 @@ internal static class JsonLookupOutput
         var document = new JsonLookup(
             outcome.Status.Value,
             outcome.ObservedAt,
-            false,
-            null,
-            GetWarnings(outcome.Status),
+            outcome.IsCached,
+            outcome.CacheAge is { } age ? (long)age.TotalSeconds : null,
+            GetWarnings(outcome.HasCountryMismatch),
             families);
         var output = JsonSerializer.Serialize(document, SerializerOptions);
 
@@ -36,30 +36,31 @@ internal static class JsonLookupOutput
                 found.PublicIp.Address.ToString(),
                 found.City,
                 found.Country.Value,
-                GetSource(found.PublicIp.Provider)),
+                PublicIpProviderContract.Format(found.PublicIp.Provider)),
             LookupOutcome.LocationUnavailable unavailable => new JsonFamily(
                 unavailable.PublicIp.Family.ToString(),
                 unavailable.PublicIp.Address.ToString(),
                 null,
                 null,
-                GetSource(unavailable.PublicIp.Provider)),
+                PublicIpProviderContract.Format(
+                    unavailable.PublicIp.Provider)),
+            LookupOutcome.DatabaseUnavailable
+            {
+                PublicIp: { } publicIp,
+            } => new JsonFamily(
+                    publicIp.Family.ToString(),
+                    publicIp.Address.ToString(),
+                    null,
+                    null,
+                    PublicIpProviderContract.Format(publicIp.Provider)),
             _ => null,
         };
 
     private static IReadOnlyList<string> GetWarnings(
-        LiveLookupStatus status) =>
-        status == LiveLookupStatus.CountryMismatch
+        bool hasCountryMismatch) =>
+        hasCountryMismatch
             ? ["possible-vpn-leak"]
             : [];
-
-    private static string GetSource(PublicIpProvider provider) =>
-        provider switch
-        {
-            PublicIpProvider.Ipify => "ipify",
-            PublicIpProvider.IdentMe => "ident.me",
-            _ => throw new InvalidOperationException(
-                $"Unknown public IP provider: {provider}"),
-        };
 
     private sealed record JsonLookup(
         string Status,

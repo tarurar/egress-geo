@@ -20,6 +20,16 @@ database at:
 - `$XDG_DATA_HOME/egress-geo/GeoLite2-City.mmdb`, when `XDG_DATA_HOME` is set;
 - `$HOME/.local/share/egress-geo/GeoLite2-City.mmdb` otherwise.
 
+The last successful egress snapshot is kept at:
+
+- `$XDG_CACHE_HOME/egress-geo/snapshot.json`, when `XDG_CACHE_HOME` is set;
+- `$HOME/.cache/egress-geo/snapshot.json` otherwise.
+
+The cache directory and file are user-private. Snapshot replacement uses an
+atomic rename so an interrupted write cannot leave a partial cache file. A
+valid snapshot records usable locations for both address families, so a
+one-family result cannot replace the last complete dual-stack observation.
+
 Run the source command with:
 
 ```console
@@ -29,7 +39,15 @@ dotnet run --project src/EgressGeo/EgressGeo.csproj
 When both families resolve to the same city and country, human output shares
 one location line. Different cities receive separate family rows. Different
 countries also produce a possible-VPN-leak warning and exit `2`; an ordinary
-live result exits `0`, and no usable live location exits `1`.
+live result exits `0`, a cached-only result exits `3`, and no usable result
+exits `1`.
+
+Live address discovery still runs on every lookup. When an address is current
+but GeoLite cannot resolve it, location data may be reused only from an exact
+address match in a cache no older than 24 hours. When both live address-family
+probes fail, the complete recent snapshot is shown with a prominent cached
+marker and readable age. Older, malformed, or semantically invalid snapshots
+are ignored.
 
 Use `--json` for the stable machine-readable form:
 
@@ -52,11 +70,12 @@ Use `--json` for the stable machine-readable form:
 }
 ```
 
-`status` is `healthy`, `country-mismatch`, or `failed`. A country mismatch adds
-`possible-vpn-leak` to `warnings`. Live results set `cached` to `false` and
-`cacheAgeSeconds` to `null`. The `families` array contains one entry per
-discovered address; unavailable city or country values are explicit JSON
-`null` values.
+`status` is `healthy`, `country-mismatch`, `cached`, or `failed`. A country
+mismatch adds `possible-vpn-leak` to `warnings`. Fully live results set
+`cached` to `false` and `cacheAgeSeconds` to `null`; exact-address location
+reuse and cached-only fallback set `cached` to `true` and report the snapshot
+age. The `families` array contains one entry per discovered or cached address;
+unavailable city or country values are explicit JSON `null` values.
 
 The rootless `geo setup` credential wizard is tracked separately and is not
 part of this first lookup milestone. A production GeoLite database and MaxMind

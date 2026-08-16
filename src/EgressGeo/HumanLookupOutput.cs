@@ -2,19 +2,60 @@ namespace EgressGeo;
 
 internal static class HumanLookupOutput
 {
-    internal static CommandResult Render(LiveLookupOutcome outcome)
+    internal static CommandResult Render(LookupResult outcome)
     {
         var familyOutcomes = new[] { outcome.IPv4, outcome.IPv6 };
         var locations = familyOutcomes
             .OfType<LookupOutcome.Found>()
             .ToArray();
-        return locations.Length > 0
+        var result = locations.Length > 0
             ? RenderAvailable(outcome, familyOutcomes, locations)
             : RenderUnavailable(familyOutcomes);
+        return outcome.CacheUsage switch
+        {
+            CacheUsage.CompleteSnapshot snapshot => result with
+            {
+                ExitCode = outcome.ExitCode,
+                Output =
+                    $"CACHED EGRESS SNAPSHOT (age {RenderAge(snapshot.Age)}): " +
+                    "live public-address discovery is unavailable.\n" +
+                    result.Output,
+            },
+            CacheUsage.ExactAddressMatch exactAddress => result with
+            {
+                ExitCode = outcome.ExitCode,
+                Output =
+                    $"CACHED LOCATION (age {RenderAge(exactAddress.Age)}): " +
+                    "reused for an exact live public-address match.\n" +
+                    result.Output,
+            },
+            _ => result,
+        };
     }
 
+    private static string RenderAge(TimeSpan age)
+    {
+        var totalSeconds = Math.Max(0, (long)age.TotalSeconds);
+        var hours = totalSeconds / 3600;
+        var minutes = totalSeconds % 3600 / 60;
+        if (hours > 0)
+        {
+            var renderedHours = RenderUnit(hours, "hour");
+            return minutes == 0
+                ? renderedHours
+                : $"{renderedHours} {RenderUnit(minutes, "minute")}";
+        }
+
+        return minutes > 0
+            ? RenderUnit(minutes, "minute")
+            : RenderUnit(totalSeconds, "second");
+    }
+
+    private static string RenderUnit(long value, string unit) =>
+        $"{value} {unit}{(value == 1 ? string.Empty : "s")}";
+
     private static CommandResult RenderAvailable(
-        LiveLookupOutcome outcome,
+        LookupResult outcome,
         LookupOutcome[] familyOutcomes,
         LookupOutcome.Found[] locations)
     {
@@ -22,7 +63,11 @@ internal static class HumanLookupOutput
             .Where(
                 candidate =>
                     candidate is LookupOutcome.Found or
-                        LookupOutcome.LocationUnavailable)
+                        LookupOutcome.LocationUnavailable or
+                        LookupOutcome.DatabaseUnavailable
+                    {
+                        PublicIp: not null,
+                    })
             .ToArray();
         var canShareLocation = discovered.Length == 1 ||
             (locations.Length == 2 && SameLocation(locations));
@@ -136,6 +181,12 @@ internal static class HumanLookupOutput
                 $"Approximate location " +
                 $"({unavailable.PublicIp.Family}): unavailable\n" +
                 RenderAddress(unavailable.PublicIp),
+            LookupOutcome.DatabaseUnavailable
+            {
+                PublicIp: { } publicIp,
+            } =>
+                $"Approximate location ({publicIp.Family}): unavailable\n" +
+                RenderAddress(publicIp),
             _ => throw new InvalidOperationException(
                 $"Cannot render live family row for " +
                 outcome.GetType().Name),
