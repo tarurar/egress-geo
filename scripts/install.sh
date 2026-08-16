@@ -11,9 +11,15 @@ egress_geo_resolve_paths install
 
 repository_root=$(cd -- "$script_directory/.." && pwd)
 project_path="$repository_root/src/EgressGeo/EgressGeo.csproj"
+setup_script="$script_directory/setup.sh"
+paths_script="$script_directory/paths.sh"
 
 [[ -f $project_path ]] ||
   egress_geo_fail "project not found: $project_path"
+[[ -f $setup_script ]] ||
+  egress_geo_fail "setup wizard not found: $setup_script"
+[[ -f $paths_script ]] ||
+  egress_geo_fail "path helper not found: $paths_script"
 command -v dotnet >/dev/null 2>&1 ||
   egress_geo_fail 'dotnet was not found on PATH.'
 egress_geo_path_contains "$geo_binary_directory" ||
@@ -55,6 +61,9 @@ dotnet publish "$project_path" \
   --runtime linux-x64 \
   --self-contained false \
   --output "$publish_directory"
+
+install -m 0755 -- "$setup_script" "$publish_directory/setup.sh"
+install -m 0644 -- "$paths_script" "$publish_directory/paths.sh"
 
 [[ -x $publish_directory/geo ]] ||
   egress_geo_fail 'publish did not produce an executable geo app host.'

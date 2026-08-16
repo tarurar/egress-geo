@@ -11,6 +11,8 @@ var dependencies = new GeoApplicationDependencies(
     Console.Out,
     Console.Error,
     TimeProvider.System);
-var application = new GeoApplication(dependencies);
+var application = new GeoApplication(
+    dependencies,
+    new BashSetupWizard(Console.Error));
 
 return await application.Run(args, CancellationToken.None);

@@ -39,6 +39,18 @@ public sealed class InstallationScriptsTests
     }
 
     [TestMethod]
+    public async Task Install_includes_the_onboarding_wizard_sidecars()
+    {
+        using var environment = new InstallationTestEnvironment();
+
+        var result = await environment.RunScript("install.sh");
+
+        Assert.AreEqual(0, result.ExitCode, result.Error);
+        Assert.IsTrue(File.Exists(environment.ApplicationPath("setup.sh")));
+        Assert.IsTrue(File.Exists(environment.ApplicationPath("paths.sh")));
+    }
+
+    [TestMethod]
     public async Task Installed_launcher_forwards_without_using_the_checkout()
     {
         using var environment = new InstallationTestEnvironment();
@@ -315,6 +327,7 @@ public sealed class InstallationScriptsTests
             "/usr/bin/bash",
             "-n",
             Path.Combine(RepositoryRoot, "scripts", "install.sh"),
+            Path.Combine(RepositoryRoot, "scripts", "setup.sh"),
             Path.Combine(RepositoryRoot, "scripts", "uninstall.sh"),
             Path.Combine(RepositoryRoot, "scripts", "paths.sh"));
 

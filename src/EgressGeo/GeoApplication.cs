@@ -2,12 +2,32 @@ using System.Reflection;
 
 namespace EgressGeo;
 
-public sealed class GeoApplication(GeoApplicationDependencies dependencies)
+public sealed class GeoApplication
 {
     private static readonly TimeSpan LiveDiscoveryBudget =
         TimeSpan.FromSeconds(2);
     private static readonly TimeSpan PrimaryProviderBudget =
         TimeSpan.FromSeconds(1);
+    private readonly GeoApplicationDependencies dependencies;
+    private readonly ISetupWizard setupWizard;
+
+    public GeoApplication(GeoApplicationDependencies dependencies)
+        : this(
+            dependencies,
+            new BashSetupWizard(dependencies?.Error ??
+                throw new ArgumentNullException(nameof(dependencies))))
+    {
+    }
+
+    public GeoApplication(
+        GeoApplicationDependencies dependencies,
+        ISetupWizard setupWizard)
+    {
+        this.dependencies = dependencies ??
+            throw new ArgumentNullException(nameof(dependencies));
+        this.setupWizard = setupWizard ??
+            throw new ArgumentNullException(nameof(setupWizard));
+    }
 
     public ValueTask<int> Run(
         string[] arguments,
@@ -17,6 +37,10 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
             GeoCommand.Lookup lookup => RunConfiguredLookup(
                 lookup.OutputFormat,
                 cancellationToken),
+            GeoCommand.Setup => setupWizard.Run(cancellationToken),
+            GeoCommand.VerifyDatabase => Write(
+                CommandLineOutput.DatabaseVerification(
+                    dependencies.Geolocation.IsAvailable)),
             GeoCommand.Help => Write(CommandLineOutput.Help()),
             GeoCommand.Version => Write(CommandLineOutput.Version(GetVersion())),
             GeoCommand.Invalid => Write(CommandLineOutput.InvalidArguments()),

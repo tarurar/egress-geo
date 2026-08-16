@@ -49,13 +49,36 @@ The installer publishes a framework-dependent Linux x86-64 application to
 `$HOME/.local/share/egress-geo/app` when `XDG_DATA_HOME` is unset. It installs
 the launcher at `$HOME/.local/bin/geo`; installation stops before publishing
 unless that directory is already on `PATH`.
-The launcher refers only to the published application, so the source checkout
-is not needed to run the installed command. Re-running the installer replaces
-stale publish sidecars and repairs the launcher without duplicating either.
+The launcher refers only to the published application and setup wizard, so the
+source checkout is not needed to run the installed command. Re-running the
+installer replaces stale publish sidecars and repairs the launcher without
+duplicating either.
 
-Until GeoLite onboarding is implemented and run, lookup exits with the exact
-next-step message `Run: geo setup`. The onboarding wizard is tracked
-separately.
+Configure GeoLite after installation:
+
+```console
+geo setup
+```
+
+The three-stage wizard opens MaxMind's GeoLite-specific signup, account
+information, and license-key pages. It waits for the human to complete account
+and email verification, captures the numeric account ID visibly, and captures
+the license key with hidden terminal input. It never asks for the MaxMind
+account password.
+
+The wizard writes only the required `geoipupdate` settings to
+`$XDG_CONFIG_HOME/egress-geo/GeoIP.conf`, or
+`$HOME/.config/egress-geo/GeoIP.conf` when `XDG_CONFIG_HOME` is unset. The file
+is mode `0600`. Credentials are read from that file by the updater; they are
+not passed as command-line arguments.
+
+Setup downloads MaxMind's official `geoipupdate` 8.0.0 Linux amd64 archive,
+checks its pinned SHA-256 value before activation, and installs the executable
+under user application data. It then downloads only `GeoLite2-City` and runs
+the installed `geo` command to verify the database. A failed download or
+checksum check preserves an existing updater, database, and active
+configuration. On a re-run, press Enter at either credential prompt to keep a
+valid saved value; missing updater or database assets are repaired.
 
 Run the idempotent uninstaller from the source checkout with:
 

@@ -24,6 +24,14 @@ internal static class CommandLineOutput
     internal static CommandResult Version(string version) =>
         new(0, $"geo {version}\n", string.Empty);
 
+    internal static CommandResult DatabaseVerification(bool isAvailable) =>
+        isAvailable
+            ? new(0, string.Empty, string.Empty)
+            : new(
+                1,
+                string.Empty,
+                "GeoLite2 City database is missing or unreadable.\n");
+
     internal static CommandResult InvalidArguments() =>
         new(1, string.Empty, "Unknown arguments. Run: geo --help\n");
 }
