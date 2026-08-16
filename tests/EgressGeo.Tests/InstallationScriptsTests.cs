@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 
 namespace EgressGeo.Tests;
@@ -73,6 +75,29 @@ public sealed class InstallationScriptsTests
                 "Setup:\n  geo setup\n",
                 StringComparison.Ordinal));
         Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
+    public async Task Installed_unconfigured_command_points_to_setup()
+    {
+        await using var proxy = new RejectingHttpProxy();
+        using var environment = new InstallationTestEnvironment
+        {
+            HttpProxyUrl = proxy.Url,
+            PublishBuiltApplication = true,
+        };
+        Assert.AreEqual(
+            0,
+            (await environment.RunScript("install.sh")).ExitCode);
+
+        var result = await environment.Run(environment.LauncherPath);
+
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(string.Empty, result.Output);
+        Assert.AreEqual(
+            "GeoLite2 City database is missing or unreadable.\n" +
+            "Run: geo setup\n",
+            result.Error);
     }
 
     [TestMethod]
@@ -400,6 +425,8 @@ public sealed class InstallationScriptsTests
 
         public bool IncludeLauncherDirectoryOnPath { get; init; } = true;
 
+        public string? HttpProxyUrl { get; init; }
+
         public bool PublishBuiltApplication { get; init; }
 
         public string LauncherPath => Path.Combine(
@@ -553,6 +580,13 @@ public sealed class InstallationScriptsTests
                     AppContext.BaseDirectory;
             }
 
+            if (HttpProxyUrl is not null)
+            {
+                startInfo.Environment["HTTP_PROXY"] = HttpProxyUrl;
+                startInfo.Environment["HTTPS_PROXY"] = HttpProxyUrl;
+                startInfo.Environment["NO_PROXY"] = string.Empty;
+            }
+
             var binaryDirectory = Path.GetDirectoryName(LauncherPath);
             startInfo.Environment["PATH"] = IncludeLauncherDirectoryOnPath
                 ? $"{ToolsPath}:{binaryDirectory}:/usr/bin:/bin"
@@ -573,4 +607,58 @@ public sealed class InstallationScriptsTests
         int ExitCode,
         string Output,
         string Error);
+
+    private sealed class RejectingHttpProxy : IAsyncDisposable
+    {
+        private static readonly byte[] Rejection = Encoding.ASCII.GetBytes(
+            "HTTP/1.1 502 Bad Gateway\r\n" +
+            "Content-Length: 0\r\n" +
+            "Connection: close\r\n\r\n");
+
+        private readonly TcpListener listener = new(IPAddress.Loopback, 0);
+        private readonly CancellationTokenSource stopping = new();
+        private readonly Task accepting;
+
+        public RejectingHttpProxy()
+        {
+            listener.Start();
+            var endpoint = (IPEndPoint)listener.LocalEndpoint;
+            Url = $"http://127.0.0.1:{endpoint.Port}";
+            accepting = RejectConnections(stopping.Token);
+        }
+
+        public string Url { get; }
+
+        public async ValueTask DisposeAsync()
+        {
+            await stopping.CancelAsync();
+            listener.Stop();
+            await accepting;
+            stopping.Dispose();
+        }
+
+        private async Task RejectConnections(
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                while (true)
+                {
+                    using var client = await listener.AcceptTcpClientAsync(
+                        cancellationToken);
+                    await client.GetStream().WriteAsync(
+                        Rejection,
+                        cancellationToken);
+                }
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+            }
+            catch (SocketException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+            }
+        }
+    }
 }
