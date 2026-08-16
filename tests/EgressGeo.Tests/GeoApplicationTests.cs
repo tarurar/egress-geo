@@ -83,6 +83,21 @@ public sealed class GeoApplicationTests
     {
         var result = await RunApplication(
             [],
+            new UnavailablePublicIpClient(),
+            new AvailableUnexpectedGeolocationDatabase());
+
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(string.Empty, result.Output);
+        Assert.AreEqual(
+            "Public IPv4 address is unavailable.\n",
+            result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_reports_public_IPv4_client_exception_unavailable()
+    {
+        var result = await RunApplication(
+            [],
             new FailingPublicIpClient(),
             new AvailableUnexpectedGeolocationDatabase());
 
@@ -114,6 +129,21 @@ public sealed class GeoApplicationTests
         var result = await RunApplication(
             [],
             new FakePublicIpClient("2001:db8::1"),
+            new AvailableUnexpectedGeolocationDatabase());
+
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(string.Empty, result.Output);
+        Assert.AreEqual(
+            "Public IPv4 address is unavailable.\n",
+            result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_reports_multiple_IPv4_addresses_unavailable()
+    {
+        var result = await RunApplication(
+            [],
+            new FakePublicIpClient("203.0.113.7\n198.51.100.5"),
             new AvailableUnexpectedGeolocationDatabase());
 
         Assert.AreEqual(1, result.ExitCode);
@@ -238,6 +268,14 @@ public sealed class GeoApplicationTests
         public ValueTask<PublicIpResponse> GetIpifyIPv4(
             CancellationToken cancellationToken) =>
             throw new HttpRequestException("Synthetic provider failure.");
+    }
+
+    private sealed class UnavailablePublicIpClient : IPublicIpClient
+    {
+        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult<PublicIpResponse>(
+                new PublicIpResponse.Unavailable());
     }
 
     private sealed class UnexpectedGeolocationDatabase : IGeolocationDatabase
