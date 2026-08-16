@@ -6,6 +6,28 @@ namespace EgressGeo.Tests;
 public sealed class PublicIpHttpClientTests
 {
     [TestMethod]
+    public async Task Ipify_request_uses_IPv4_only_endpoint()
+    {
+        Uri? requestedUri = null;
+        using var http = new HttpClient(
+            new FakeHttpMessageHandler(
+                (request, _) =>
+                {
+                    requestedUri = request.RequestUri;
+                    return Task.FromResult(
+                        new HttpResponseMessage(HttpStatusCode.OK)
+                        {
+                            Content = new StringContent("203.0.113.7"),
+                        });
+                }));
+        var client = new PublicIpHttpClient(http);
+
+        await client.GetIpifyIPv4(CancellationToken.None);
+
+        Assert.AreEqual(new Uri("https://api.ipify.org/"), requestedUri);
+    }
+
+    [TestMethod]
     public async Task Ident_me_request_uses_IPv4_only_endpoint()
     {
         Uri? requestedUri = null;
@@ -25,6 +47,50 @@ public sealed class PublicIpHttpClientTests
         await client.GetIdentMeIPv4(CancellationToken.None);
 
         Assert.AreEqual(new Uri("https://4.ident.me/"), requestedUri);
+    }
+
+    [TestMethod]
+    public async Task Ipify_request_uses_IPv6_only_endpoint()
+    {
+        Uri? requestedUri = null;
+        using var http = new HttpClient(
+            new FakeHttpMessageHandler(
+                (request, _) =>
+                {
+                    requestedUri = request.RequestUri;
+                    return Task.FromResult(
+                        new HttpResponseMessage(HttpStatusCode.OK)
+                        {
+                            Content = new StringContent("2001:db8::7"),
+                        });
+                }));
+        var client = new PublicIpHttpClient(http);
+
+        await client.GetIpifyIPv6(CancellationToken.None);
+
+        Assert.AreEqual(new Uri("https://api6.ipify.org/"), requestedUri);
+    }
+
+    [TestMethod]
+    public async Task Ident_me_request_uses_IPv6_only_endpoint()
+    {
+        Uri? requestedUri = null;
+        using var http = new HttpClient(
+            new FakeHttpMessageHandler(
+                (request, _) =>
+                {
+                    requestedUri = request.RequestUri;
+                    return Task.FromResult(
+                        new HttpResponseMessage(HttpStatusCode.OK)
+                        {
+                            Content = new StringContent("2001:db8::7"),
+                        });
+                }));
+        var client = new PublicIpHttpClient(http);
+
+        await client.GetIdentMeIPv6(CancellationToken.None);
+
+        Assert.AreEqual(new Uri("https://6.ident.me/"), requestedUri);
     }
 
     [TestMethod]

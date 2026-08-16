@@ -1,5 +1,3 @@
-using System.Net;
-
 namespace EgressGeo;
 
 internal abstract record LookupOutcome
@@ -9,11 +7,14 @@ internal abstract record LookupOutcome
     }
 
     internal sealed record Found(
-        IPAddress Address,
+        DiscoveredPublicIp PublicIp,
         string? City,
         CountryCode Country) : LookupOutcome;
 
-    internal sealed record LocationUnavailable(IPAddress Address) :
+    internal sealed record LocationUnavailable(DiscoveredPublicIp PublicIp) :
+        LookupOutcome;
+
+    internal sealed record PublicAddressUnavailable(IpFamily Family) :
         LookupOutcome;
 
     internal sealed record DatabaseUnavailable : LookupOutcome;

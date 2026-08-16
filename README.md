@@ -1,11 +1,12 @@
 # egress-geo
 
 `geo` reports the approximate city and country of the machine's current public
-IPv4 egress. It asks ipify for the public address first, falls back to the
-IPv4-only ident.me endpoint after a failed or invalid response, and bounds the
-complete live discovery attempt to approximately two seconds. It resolves the
-address locally with a user-provided GeoLite2 City database, so no hosted
-geolocation service receives the address for lookup.
+IPv4 and IPv6 egress. It discovers both families concurrently, asks each
+family-specific ipify endpoint first, and uses the corresponding ident.me
+endpoint only after a failed or invalid response. The complete live attempt is
+bounded to approximately two seconds. Addresses are resolved locally with a
+user-provided GeoLite2 City database, so no hosted geolocation service receives
+them for lookup.
 
 IP geolocation is approximate. The reported city can represent a nearby
 population center, network registration, or datacenter rather than a physical
@@ -24,6 +25,38 @@ Run the source command with:
 ```console
 dotnet run --project src/EgressGeo/EgressGeo.csproj
 ```
+
+When both families resolve to the same city and country, human output shares
+one location line. Different cities receive separate family rows. Different
+countries also produce a possible-VPN-leak warning and exit `2`; an ordinary
+live result exits `0`, and no usable live location exits `1`.
+
+Use `--json` for the stable machine-readable form:
+
+```json
+{
+  "status": "healthy",
+  "observedAt": "2026-08-16T12:34:56+00:00",
+  "cached": false,
+  "cacheAgeSeconds": null,
+  "warnings": [],
+  "families": [
+    {
+      "family": "IPv4",
+      "address": "203.0.113.7",
+      "approximateCity": "Manama",
+      "countryCode": "BH",
+      "discoverySource": "ipify"
+    }
+  ]
+}
+```
+
+`status` is `healthy`, `country-mismatch`, or `failed`. A country mismatch adds
+`possible-vpn-leak` to `warnings`. Live results set `cached` to `false` and
+`cacheAgeSeconds` to `null`. The `families` array contains one entry per
+discovered address; unavailable city or country values are explicit JSON
+`null` values.
 
 The rootless `geo setup` credential wizard is tracked separately and is not
 part of this first lookup milestone. A production GeoLite database and MaxMind

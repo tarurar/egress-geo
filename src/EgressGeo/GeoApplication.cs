@@ -16,39 +16,34 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
         CancellationToken cancellationToken) =>
         GeoCommand.Parse(arguments) switch
         {
-            GeoCommand.Lookup => RunLookup(cancellationToken),
+            GeoCommand.Lookup lookup => RunLookup(
+                lookup.OutputFormat,
+                cancellationToken),
             GeoCommand.Help => Write(CommandLineOutput.Help()),
             GeoCommand.Version => Write(CommandLineOutput.Version(GetVersion())),
             GeoCommand.Invalid => Write(CommandLineOutput.InvalidArguments()),
             _ => throw new InvalidOperationException("Unknown geo command."),
         };
 
-    private ValueTask<int> RunLookup(CancellationToken cancellationToken)
+    private ValueTask<int> RunLookup(
+        LookupOutputFormat outputFormat,
+        CancellationToken cancellationToken)
     {
         if (!dependencies.Geolocation.IsAvailable)
         {
-            return Write(HumanLookupOutput.MissingDatabase());
+            var unavailable = new LookupOutcome.DatabaseUnavailable();
+            var outcome = new LiveLookupOutcome(
+                dependencies.TimeProvider.GetUtcNow(),
+                unavailable,
+                unavailable);
+            return Write(Render(outcome, outputFormat));
         }
 
-        return RunConfiguredLookup(cancellationToken);
+        return RunConfiguredLookup(outputFormat, cancellationToken);
     }
 
     private async ValueTask<int> RunConfiguredLookup(
-        CancellationToken cancellationToken)
-    {
-        var address = await DiscoverIPv4(cancellationToken);
-        if (address is null)
-        {
-            return await Write(HumanLookupOutput.PublicAddressUnavailable());
-        }
-
-        var lookup = dependencies.Geolocation.Lookup(address);
-        var outcome = LookupDecision.Decide(address, lookup);
-
-        return await Write(HumanLookupOutput.Render(outcome));
-    }
-
-    private async ValueTask<IPAddress?> DiscoverIPv4(
+        LookupOutputFormat outputFormat,
         CancellationToken cancellationToken)
     {
         using var liveDeadline = new CancellationTokenSource(
@@ -58,28 +53,77 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
             CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken,
                 liveDeadline.Token);
+
+        var ipv4Task = Discover(
+            IpFamily.IPv4,
+            AddressFamily.InterNetwork,
+            dependencies.PublicIp.GetIpifyIPv4,
+            dependencies.PublicIp.GetIdentMeIPv4,
+            liveDiscovery.Token,
+            cancellationToken).AsTask();
+        var ipv6Task = Discover(
+            IpFamily.IPv6,
+            AddressFamily.InterNetworkV6,
+            dependencies.PublicIp.GetIpifyIPv6,
+            dependencies.PublicIp.GetIdentMeIPv6,
+            liveDiscovery.Token,
+            cancellationToken).AsTask();
+
+        await Task.WhenAll(ipv4Task, ipv6Task);
+        var outcome = new LiveLookupOutcome(
+            dependencies.TimeProvider.GetUtcNow(),
+            Locate(await ipv4Task),
+            Locate(await ipv6Task));
+
+        return await Write(Render(outcome, outputFormat));
+    }
+
+    private async ValueTask<PublicIpDiscovery> Discover(
+        IpFamily family,
+        AddressFamily addressFamily,
+        Func<CancellationToken, ValueTask<PublicIpResponse>> primary,
+        Func<CancellationToken, ValueTask<PublicIpResponse>> fallback,
+        CancellationToken liveDiscoveryToken,
+        CancellationToken callerCancellationToken)
+    {
         using var primaryDeadline = new CancellationTokenSource(
             PrimaryProviderBudget,
             dependencies.TimeProvider);
         using var primaryRequest =
             CancellationTokenSource.CreateLinkedTokenSource(
-                liveDiscovery.Token,
+                liveDiscoveryToken,
                 primaryDeadline.Token);
 
         var response = await RequestPublicIp(
-            dependencies.PublicIp.GetIpifyIPv4,
+            primary,
             primaryRequest.Token,
-            cancellationToken);
-        if (ParseIPv4(response) is null &&
-            !liveDiscovery.IsCancellationRequested)
+            callerCancellationToken);
+        var address = Parse(response, addressFamily);
+        if (address is not null)
         {
-            response = await RequestPublicIp(
-                dependencies.PublicIp.GetIdentMeIPv4,
-                liveDiscovery.Token,
-                cancellationToken);
+            return new PublicIpDiscovery.Found(
+                new DiscoveredPublicIp(
+                    family,
+                    address,
+                    PublicIpProvider.Ipify));
         }
 
-        return ParseIPv4(response);
+        if (!liveDiscoveryToken.IsCancellationRequested)
+        {
+            response = await RequestPublicIp(
+                fallback,
+                liveDiscoveryToken,
+                callerCancellationToken);
+            address = Parse(response, addressFamily);
+        }
+
+        return address is null
+            ? new PublicIpDiscovery.Unavailable(family)
+            : new PublicIpDiscovery.Found(
+                new DiscoveredPublicIp(
+                    family,
+                    address,
+                    PublicIpProvider.IdentMe));
     }
 
     private static async ValueTask<PublicIpResponse> RequestPublicIp(
@@ -100,7 +144,9 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
         }
     }
 
-    private static IPAddress? ParseIPv4(PublicIpResponse response)
+    private static IPAddress? Parse(
+        PublicIpResponse response,
+        AddressFamily requiredFamily)
     {
         if (response is not PublicIpResponse.Received received)
         {
@@ -109,10 +155,9 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
 
         var candidate = received.Content.Trim();
         if (!IPAddress.TryParse(candidate, out var address) ||
-            address.AddressFamily != AddressFamily.InterNetwork ||
-            !string.Equals(
-                candidate,
-                address.ToString(),
+            address.AddressFamily != requiredFamily ||
+            requiredFamily == AddressFamily.InterNetwork &&
+            !string.Equals(candidate, address.ToString(),
                 StringComparison.Ordinal))
         {
             return null;
@@ -120,6 +165,31 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
 
         return address;
     }
+
+    private LookupOutcome Locate(PublicIpDiscovery discovery) =>
+        discovery switch
+        {
+            PublicIpDiscovery.Found found => LookupDecision.Decide(
+                found.PublicIp,
+                dependencies.Geolocation.Lookup(found.PublicIp.Address)),
+            PublicIpDiscovery.Unavailable unavailable =>
+                new LookupOutcome.PublicAddressUnavailable(
+                    unavailable.Family),
+            _ => throw new InvalidOperationException(
+                $"Unknown public IP discovery: " +
+                discovery.GetType().Name),
+        };
+
+    private static CommandResult Render(
+        LiveLookupOutcome outcome,
+        LookupOutputFormat outputFormat) =>
+        outputFormat switch
+        {
+            LookupOutputFormat.Human => HumanLookupOutput.Render(outcome),
+            LookupOutputFormat.Json => JsonLookupOutput.Render(outcome),
+            _ => throw new InvalidOperationException(
+                $"Unknown lookup output format: {outputFormat}"),
+        };
 
     private static string GetVersion()
     {

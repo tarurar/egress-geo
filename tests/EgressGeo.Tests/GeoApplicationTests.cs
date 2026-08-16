@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Microsoft.Extensions.Time.Testing;
 
 namespace EgressGeo.Tests;
@@ -23,6 +24,298 @@ public sealed class GeoApplicationTests
             "Public address (IPv4): 203.0.113.7\n",
             result.Output);
         Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_prints_compact_dual_stack_location()
+    {
+        var ipv4Address = IPAddress.Parse("203.0.113.7");
+        var ipv6Address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new DualStackPublicIpClient(
+            ipv4Address.ToString(),
+            ipv6Address.ToString());
+        var geolocation = new DualStackGeolocationDatabase(
+            ipv4Address,
+            new GeolocationLookup.Found("Manama", "bh"),
+            ipv6Address,
+            new GeolocationLookup.Found("Manama", "bh"));
+
+        var result = await RunApplication([], publicIp, geolocation);
+
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.AreEqual(
+            "Approximate location: 🇧🇭 Manama, BH\n" +
+            "Public address (IPv4): 203.0.113.7\n" +
+            "Public address (IPv6): 2001:db8::7\n",
+            result.Output);
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_prints_separate_cities_without_leak_warning()
+    {
+        var ipv4Address = IPAddress.Parse("203.0.113.7");
+        var ipv6Address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new DualStackPublicIpClient(
+            ipv4Address.ToString(),
+            ipv6Address.ToString());
+        var geolocation = new DualStackGeolocationDatabase(
+            ipv4Address,
+            new GeolocationLookup.Found("Manama", "BH"),
+            ipv6Address,
+            new GeolocationLookup.Found("Riffa", "BH"));
+
+        var result = await RunApplication([], publicIp, geolocation);
+
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.AreEqual(
+            "Approximate location (IPv4): 🇧🇭 Manama, BH\n" +
+            "Public address (IPv4): 203.0.113.7\n" +
+            "Approximate location (IPv6): 🇧🇭 Riffa, BH\n" +
+            "Public address (IPv6): 2001:db8::7\n",
+            result.Output);
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_warns_when_family_countries_differ()
+    {
+        var ipv4Address = IPAddress.Parse("203.0.113.7");
+        var ipv6Address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new DualStackPublicIpClient(
+            ipv4Address.ToString(),
+            ipv6Address.ToString());
+        var geolocation = new DualStackGeolocationDatabase(
+            ipv4Address,
+            new GeolocationLookup.Found("Manama", "BH"),
+            ipv6Address,
+            new GeolocationLookup.Found("London", "GB"));
+
+        var result = await RunApplication([], publicIp, geolocation);
+
+        Assert.AreEqual(2, result.ExitCode);
+        Assert.AreEqual(
+            "WARNING: Possible VPN leak: IPv4 and IPv6 egress resolve " +
+            "to different countries.\n" +
+            "Approximate location (IPv4): 🇧🇭 Manama, BH\n" +
+            "Public address (IPv4): 203.0.113.7\n" +
+            "Approximate location (IPv6): 🇬🇧 London, GB\n" +
+            "Public address (IPv6): 2001:db8::7\n",
+            result.Output);
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_prints_approximate_IPv6_location()
+    {
+        var address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new OrderedIPv6PublicIpClient(
+            _ => ReceivedResponse(address.ToString()),
+            _ => throw new AssertFailedException(
+                "Primary success must not contact the fallback provider."));
+        var geolocation = new FakeGeolocationDatabase(
+            address,
+            new GeolocationLookup.Found("Manama", "bh"));
+
+        var result = await RunApplication([], publicIp, geolocation);
+
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.AreEqual(
+            "Approximate location: 🇧🇭 Manama, BH\n" +
+            "Public address (IPv6): 2001:db8::7\n",
+            result.Output);
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_reports_missing_IPv6_country_as_unavailable()
+    {
+        var address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new OrderedIPv6PublicIpClient(
+            _ => ReceivedResponse(address.ToString()),
+            _ => throw new AssertFailedException(
+                "Primary success must not contact the fallback provider."));
+        var geolocation = new FakeGeolocationDatabase(
+            address,
+            new GeolocationLookup.Found("Manama", null));
+
+        var result = await RunApplication([], publicIp, geolocation);
+
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(string.Empty, result.Output);
+        Assert.AreEqual(
+            "Approximate location unavailable for IPv6 2001:db8::7: " +
+            "GeoLite2 City has no country for this address.\n",
+            result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_uses_ident_me_when_IPv6_ipify_fails()
+    {
+        var address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new OrderedIPv6PublicIpClient(
+            _ => UnavailableResponse(),
+            _ => ReceivedResponse(address.ToString()));
+        var geolocation = new FakeGeolocationDatabase(
+            address,
+            new GeolocationLookup.Found("Manama", "bh"));
+
+        var result = await RunApplication([], publicIp, geolocation);
+
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.AreEqual(
+            "Approximate location: 🇧🇭 Manama, BH\n" +
+            "Public address (IPv6): 2001:db8::7\n",
+            result.Output);
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_discovers_both_families_concurrently()
+    {
+        var timeProvider = new FakeTimeProvider();
+        var ipv4Address = IPAddress.Parse("203.0.113.7");
+        var ipv6Address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new DelayedFallbackPublicIpClient(timeProvider);
+        var geolocation = new DualStackGeolocationDatabase(
+            ipv4Address,
+            new GeolocationLookup.Found("Manama", "BH"),
+            ipv6Address,
+            new GeolocationLookup.Found("Manama", "BH"));
+
+        var lookup = RunApplication(
+            [],
+            publicIp,
+            geolocation,
+            timeProvider);
+        timeProvider.Advance(TimeSpan.FromSeconds(1.5));
+        var result = await lookup.AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.AreEqual(
+            "Approximate location: 🇧🇭 Manama, BH\n" +
+            "Public address (IPv4): 203.0.113.7\n" +
+            "Public address (IPv6): 2001:db8::7\n",
+            result.Output);
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
+    public async Task Json_lookup_reports_stable_dual_stack_contract()
+    {
+        var observedAt = new DateTimeOffset(
+            2026,
+            8,
+            16,
+            12,
+            34,
+            56,
+            TimeSpan.Zero);
+        var timeProvider = new FakeTimeProvider(observedAt);
+        var ipv4Address = IPAddress.Parse("203.0.113.7");
+        var ipv6Address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new MixedProviderPublicIpClient();
+        var geolocation = new DualStackGeolocationDatabase(
+            ipv4Address,
+            new GeolocationLookup.Found("Manama", "BH"),
+            ipv6Address,
+            new GeolocationLookup.Found(null, "BH"));
+
+        var result = await RunApplication(
+            ["--json"],
+            publicIp,
+            geolocation,
+            timeProvider);
+
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.AreEqual(string.Empty, result.Error);
+        using var document = JsonDocument.Parse(result.Output);
+        var root = document.RootElement;
+        Assert.AreEqual("healthy", root.GetProperty("status").GetString());
+        Assert.AreEqual(
+            observedAt,
+            root.GetProperty("observedAt").GetDateTimeOffset());
+        Assert.IsFalse(root.GetProperty("cached").GetBoolean());
+        Assert.AreEqual(
+            JsonValueKind.Null,
+            root.GetProperty("cacheAgeSeconds").ValueKind);
+        Assert.AreEqual(0, root.GetProperty("warnings").GetArrayLength());
+
+        var families = root.GetProperty("families").EnumerateArray().ToArray();
+        Assert.AreEqual(2, families.Length);
+        AssertFamily(
+            families[0],
+            "IPv4",
+            "203.0.113.7",
+            "Manama",
+            "BH",
+            "ipify");
+        AssertFamily(
+            families[1],
+            "IPv6",
+            "2001:db8::7",
+            null,
+            "BH",
+            "ident.me");
+    }
+
+    [TestMethod]
+    public async Task Json_lookup_reports_country_mismatch()
+    {
+        var ipv4Address = IPAddress.Parse("203.0.113.7");
+        var ipv6Address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new DualStackPublicIpClient(
+            ipv4Address.ToString(),
+            ipv6Address.ToString());
+        var geolocation = new DualStackGeolocationDatabase(
+            ipv4Address,
+            new GeolocationLookup.Found("Manama", "BH"),
+            ipv6Address,
+            new GeolocationLookup.Found("London", "GB"));
+
+        var result = await RunApplication(["--json"], publicIp, geolocation);
+
+        Assert.AreEqual(2, result.ExitCode);
+        Assert.AreEqual(string.Empty, result.Error);
+        using var document = JsonDocument.Parse(result.Output);
+        var root = document.RootElement;
+        Assert.AreEqual(
+            "country-mismatch",
+            root.GetProperty("status").GetString());
+        var warnings = root.GetProperty("warnings");
+        Assert.AreEqual(1, warnings.GetArrayLength());
+        Assert.AreEqual(
+            "possible-vpn-leak",
+            warnings[0].GetString());
+        Assert.AreEqual(2, root.GetProperty("families").GetArrayLength());
+    }
+
+    [TestMethod]
+    public async Task Json_lookup_reports_unavailable_location()
+    {
+        var address = IPAddress.Parse("203.0.113.7");
+        var publicIp = new FakePublicIpClient(address.ToString());
+        var geolocation = new FakeGeolocationDatabase(
+            address,
+            new GeolocationLookup.Found("Manama", null));
+
+        var result = await RunApplication(["--json"], publicIp, geolocation);
+
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(string.Empty, result.Error);
+        using var document = JsonDocument.Parse(result.Output);
+        var root = document.RootElement;
+        Assert.AreEqual("failed", root.GetProperty("status").GetString());
+        Assert.AreEqual(0, root.GetProperty("warnings").GetArrayLength());
+        var families = root.GetProperty("families");
+        Assert.AreEqual(1, families.GetArrayLength());
+        AssertFamily(
+            families[0],
+            "IPv4",
+            "203.0.113.7",
+            null,
+            null,
+            "ipify");
     }
 
     [TestMethod]
@@ -138,7 +431,7 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
-    public async Task Lookup_reports_both_providers_unavailable()
+    public async Task Lookup_reports_both_families_unavailable()
     {
         var result = await RunApplication(
             [],
@@ -150,7 +443,7 @@ public sealed class GeoApplicationTests
         Assert.AreEqual(1, result.ExitCode);
         Assert.AreEqual(string.Empty, result.Output);
         Assert.AreEqual(
-            "Public IPv4 address is unavailable.\n",
+            "Public IPv4 and IPv6 addresses are unavailable.\n",
             result.Error);
     }
 
@@ -181,7 +474,7 @@ public sealed class GeoApplicationTests
         Assert.AreEqual(1, result.ExitCode);
         Assert.AreEqual(string.Empty, result.Output);
         Assert.AreEqual(
-            "Public IPv4 address is unavailable.\n",
+            "Public IPv4 and IPv6 addresses are unavailable.\n",
             result.Error);
     }
 
@@ -198,7 +491,7 @@ public sealed class GeoApplicationTests
         Assert.AreEqual(1, result.ExitCode);
         Assert.AreEqual(string.Empty, result.Output);
         Assert.AreEqual(
-            "Public IPv4 address is unavailable.\n",
+            "Public IPv4 and IPv6 addresses are unavailable.\n",
             result.Error);
     }
 
@@ -250,11 +543,12 @@ public sealed class GeoApplicationTests
         Assert.AreEqual(
             "Usage:\n" +
             "  geo\n" +
+            "  geo --json\n" +
             "  geo --help\n" +
             "  geo --version\n" +
             "\n" +
             "Shows the approximate city and country of this machine's " +
-            "public IPv4 egress.\n" +
+            "public IPv4 and IPv6 egress.\n" +
             "\n" +
             "Setup:\n" +
             "  geo setup\n" +
@@ -338,6 +632,31 @@ public sealed class GeoApplicationTests
         Assert.AreEqual(string.Empty, result.Error);
     }
 
+    private static void AssertFamily(
+        JsonElement family,
+        string expectedFamily,
+        string expectedAddress,
+        string? expectedCity,
+        string? expectedCountryCode,
+        string expectedDiscoverySource)
+    {
+        Assert.AreEqual(
+            expectedFamily,
+            family.GetProperty("family").GetString());
+        Assert.AreEqual(
+            expectedAddress,
+            family.GetProperty("address").GetString());
+        Assert.AreEqual(
+            expectedCity,
+            family.GetProperty("approximateCity").GetString());
+        Assert.AreEqual(
+            expectedCountryCode,
+            family.GetProperty("countryCode").GetString());
+        Assert.AreEqual(
+            expectedDiscoverySource,
+            family.GetProperty("discoverySource").GetString());
+    }
+
     private sealed record ApplicationResult(
         int ExitCode,
         string Output,
@@ -367,6 +686,37 @@ public sealed class GeoApplicationTests
             CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "Primary success must not contact the fallback provider.");
+
+        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+            CancellationToken cancellationToken) =>
+            UnavailableResponse();
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+            CancellationToken cancellationToken) =>
+            UnavailableResponse();
+    }
+
+    private sealed class DualStackPublicIpClient(
+        string ipv4Response,
+        string ipv6Response) : IPublicIpClient
+    {
+        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+            CancellationToken cancellationToken) =>
+            ReceivedResponse(ipv4Response);
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+            CancellationToken cancellationToken) =>
+            throw new AssertFailedException(
+                "IPv4 primary success must not contact its fallback.");
+
+        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+            CancellationToken cancellationToken) =>
+            ReceivedResponse(ipv6Response);
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+            CancellationToken cancellationToken) =>
+            throw new AssertFailedException(
+                "IPv6 primary success must not contact its fallback.");
     }
 
     private sealed class OrderedPublicIpClient(
@@ -391,6 +741,97 @@ public sealed class GeoApplicationTests
                 "ipify must be requested before ident.me.");
             return identMe(cancellationToken);
         }
+
+        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+            CancellationToken cancellationToken) =>
+            UnavailableResponse();
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+            CancellationToken cancellationToken) =>
+            UnavailableResponse();
+    }
+
+    private sealed class OrderedIPv6PublicIpClient(
+        Func<CancellationToken, ValueTask<PublicIpResponse>> ipify,
+        Func<CancellationToken, ValueTask<PublicIpResponse>> identMe) :
+        IPublicIpClient
+    {
+        private bool ipifyRequested;
+
+        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+            CancellationToken cancellationToken) =>
+            UnavailableResponse();
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+            CancellationToken cancellationToken) =>
+            UnavailableResponse();
+
+        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+            CancellationToken cancellationToken)
+        {
+            ipifyRequested = true;
+            return ipify(cancellationToken);
+        }
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+            CancellationToken cancellationToken)
+        {
+            Assert.IsTrue(
+                ipifyRequested,
+                "ipify must be requested before ident.me.");
+            return identMe(cancellationToken);
+        }
+    }
+
+    private sealed class DelayedFallbackPublicIpClient(
+        TimeProvider timeProvider) : IPublicIpClient
+    {
+        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+            CancellationToken cancellationToken) =>
+            UnavailableResponse();
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+            CancellationToken cancellationToken) =>
+            RespondAfterDelay("203.0.113.7", cancellationToken);
+
+        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+            CancellationToken cancellationToken) =>
+            UnavailableResponse();
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+            CancellationToken cancellationToken) =>
+            RespondAfterDelay("2001:db8::7", cancellationToken);
+
+        private async ValueTask<PublicIpResponse> RespondAfterDelay(
+            string address,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(
+                TimeSpan.FromSeconds(1.5),
+                timeProvider,
+                cancellationToken);
+            return new PublicIpResponse.Received(address);
+        }
+    }
+
+    private sealed class MixedProviderPublicIpClient : IPublicIpClient
+    {
+        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+            CancellationToken cancellationToken) =>
+            ReceivedResponse("203.0.113.7");
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+            CancellationToken cancellationToken) =>
+            throw new AssertFailedException(
+                "IPv4 primary success must not contact its fallback.");
+
+        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+            CancellationToken cancellationToken) =>
+            UnavailableResponse();
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+            CancellationToken cancellationToken) =>
+            ReceivedResponse("2001:db8::7");
     }
 
     private sealed class FakeGeolocationDatabase(
@@ -405,6 +846,27 @@ public sealed class GeoApplicationTests
                 : new GeolocationLookup.LocationUnavailable();
     }
 
+    private sealed class DualStackGeolocationDatabase(
+        IPAddress ipv4Address,
+        GeolocationLookup ipv4Result,
+        IPAddress ipv6Address,
+        GeolocationLookup ipv6Result) : IGeolocationDatabase
+    {
+        public bool IsAvailable => true;
+
+        public GeolocationLookup Lookup(IPAddress address)
+        {
+            if (address.Equals(ipv4Address))
+            {
+                return ipv4Result;
+            }
+
+            return address.Equals(ipv6Address)
+                ? ipv6Result
+                : new GeolocationLookup.LocationUnavailable();
+        }
+    }
+
     private sealed class UnexpectedPublicIpClient : IPublicIpClient
     {
         public ValueTask<PublicIpResponse> GetIpifyIPv4(
@@ -413,6 +875,16 @@ public sealed class GeoApplicationTests
                 "This command must not perform an HTTP request.");
 
         public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+            CancellationToken cancellationToken) =>
+            throw new AssertFailedException(
+                "This command must not perform an HTTP request.");
+
+        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+            CancellationToken cancellationToken) =>
+            throw new AssertFailedException(
+                "This command must not perform an HTTP request.");
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
             CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "This command must not perform an HTTP request.");

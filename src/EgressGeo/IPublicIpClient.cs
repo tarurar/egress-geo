@@ -7,4 +7,10 @@ public interface IPublicIpClient
 
     ValueTask<PublicIpResponse> GetIdentMeIPv4(
         CancellationToken cancellationToken);
+
+    ValueTask<PublicIpResponse> GetIpifyIPv6(
+        CancellationToken cancellationToken);
+
+    ValueTask<PublicIpResponse> GetIdentMeIPv6(
+        CancellationToken cancellationToken);
 }

@@ -1,11 +1,9 @@
-using System.Net;
-
 namespace EgressGeo;
 
 internal static class LookupDecision
 {
     internal static LookupOutcome Decide(
-        IPAddress address,
+        DiscoveredPublicIp publicIp,
         GeolocationLookup lookup) =>
         lookup switch
         {
@@ -14,10 +12,10 @@ internal static class LookupDecision
             GeolocationLookup.Found found
                 when CountryCode.Parse(found.CountryCode) is { } country =>
                 new LookupOutcome.Found(
-                    address,
+                    publicIp,
                     NormalizeCity(found.City),
                     country),
-            _ => new LookupOutcome.LocationUnavailable(address),
+            _ => new LookupOutcome.LocationUnavailable(publicIp),
         };
 
     private static string? NormalizeCity(string? city) =>

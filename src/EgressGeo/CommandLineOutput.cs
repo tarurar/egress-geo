@@ -5,11 +5,12 @@ internal static class CommandLineOutput
     private const string HelpText =
         "Usage:\n" +
         "  geo\n" +
+        "  geo --json\n" +
         "  geo --help\n" +
         "  geo --version\n" +
         "\n" +
         "Shows the approximate city and country of this machine's public " +
-        "IPv4 egress.\n" +
+        "IPv4 and IPv6 egress.\n" +
         "\n" +
         "Setup:\n" +
         "  geo setup\n" +
