@@ -1,0 +1,7 @@
+[tasks."dotnet:test"]
+description = "Runs the .NET unit tests with Microsoft Testing Platform"
+run = """
+dotnet test --solution egress-geo.slnx \
+  --no-restore \
+  --minimum-expected-tests 1
+"""

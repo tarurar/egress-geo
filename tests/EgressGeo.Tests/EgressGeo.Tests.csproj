@@ -1,0 +1,16 @@
+<Project Sdk="MSTest.Sdk/4.3.3">
+  <PropertyGroup>
+    <RootNamespace>EgressGeo.Tests</RootNamespace>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/EgressGeo/EgressGeo.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Fixtures/GeoLite2-City-Test.mmdb">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/EgressGeo/EgressGeo.csproj" />
+  <Project Path="tests/EgressGeo.Tests/EgressGeo.Tests.csproj" />
+</Solution>

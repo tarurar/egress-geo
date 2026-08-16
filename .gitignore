@@ -1,0 +1,28 @@
+# .NET build and test output
+**/bin/
+**/obj/
+artifacts/
+publish/
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# IDE-local state
+.vs/
+.idea/
+*.suo
+*.user
+
+# Credentials and local environment files
+.env
+.env.*
+!.env.example
+GeoIP.conf
+*.secrets.json
+
+# Runtime GeoLite data and application state
+*.mmdb
+!tests/EgressGeo.Tests/Fixtures/GeoLite2-City-Test.mmdb
+.cache/
+.data/

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore locked dependencies
+        run: dotnet restore egress-geo.slnx --locked-mode
+
+      - name: Build
+        run: dotnet build egress-geo.slnx --configuration Release --no-restore
+
+      - name: Test without live services
+        run: >-
+          dotnet test --solution egress-geo.slnx
+          --configuration Release
+          --no-build
+          --no-restore
+          --minimum-expected-tests 1
+
+      - name: Publish Linux x86-64
+        run: >-
+          dotnet publish src/EgressGeo/EgressGeo.csproj
+          --configuration Release
+          --runtime linux-x64
+          --self-contained false
+          --no-restore
+          --output artifacts/publish
+
+      - name: Verify command artifact
+        run: test -x artifacts/publish/geo
