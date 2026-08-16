@@ -11,7 +11,7 @@ internal abstract record LookupOutcome
     internal sealed record Found(
         IPAddress Address,
         string? City,
-        string CountryCode) : LookupOutcome;
+        CountryCode Country) : LookupOutcome;
 
     internal sealed record LocationUnavailable(IPAddress Address) :
         LookupOutcome;

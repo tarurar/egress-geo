@@ -24,19 +24,25 @@ internal static class HumanLookupOutput
             "GeoLite2 City database is missing or unreadable.\n" +
             "Run: geo setup\n");
 
+    internal static CommandResult PublicAddressUnavailable() =>
+        new(
+            1,
+            string.Empty,
+            "Public IPv4 address is unavailable.\n");
+
     private static CommandResult Render(LookupOutcome.Found found)
     {
         var city = found.City is null ? string.Empty : $"{found.City}, ";
         var output =
-            $"Approximate location: {GetFlag(found.CountryCode)} " +
-            $"{city}{found.CountryCode}\n" +
+            $"Approximate location: {GetFlag(found.Country)} " +
+            $"{city}{found.Country}\n" +
             $"Public address (IPv4): {found.Address}\n";
 
         return new CommandResult(0, output, string.Empty);
     }
 
-    private static string GetFlag(string countryCode) =>
+    private static string GetFlag(CountryCode country) =>
         string.Concat(
-            countryCode.Select(
+            country.Value.Select(
                 letter => char.ConvertFromUtf32(0x1F1E6 + letter - 'A')));
 }

@@ -2,5 +2,6 @@ namespace EgressGeo;
 
 public interface IPublicIpClient
 {
-    ValueTask<string> GetIpifyIPv4(CancellationToken cancellationToken);
+    ValueTask<PublicIpResponse> GetIpifyIPv4(
+        CancellationToken cancellationToken);
 }

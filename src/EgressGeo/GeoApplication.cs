@@ -6,64 +6,65 @@ namespace EgressGeo;
 
 public sealed class GeoApplication(GeoApplicationDependencies dependencies)
 {
-    private const string HelpText =
-        """
-        Usage:
-          geo
-          geo --help
-          geo --version
-
-        Shows the approximate city and country of this machine's public IPv4 egress.
-
-        Setup:
-          geo setup
-
-        This product includes GeoLite Data created by MaxMind, available from https://www.maxmind.com.
-        """;
-
-    public async ValueTask<int> Run(
+    public ValueTask<int> Run(
         string[] arguments,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        GeoCommand.Parse(arguments) switch
+        {
+            GeoCommand.Lookup => RunLookup(cancellationToken),
+            GeoCommand.Help => Write(CommandLineOutput.Help()),
+            GeoCommand.Version => Write(CommandLineOutput.Version(GetVersion())),
+            GeoCommand.Invalid => Write(CommandLineOutput.InvalidArguments()),
+            _ => throw new InvalidOperationException("Unknown geo command."),
+        };
+
+    private ValueTask<int> RunLookup(CancellationToken cancellationToken)
     {
-        if (arguments is ["--help"] or ["-h"])
-        {
-            await dependencies.Output.WriteLineAsync(HelpText);
-            return 0;
-        }
-
-        if (arguments is ["--version"])
-        {
-            var informationalVersion = typeof(GeoApplication).Assembly
-                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
-                .InformationalVersion;
-            var version = informationalVersion.Split('+', 2)[0];
-            await dependencies.Output.WriteLineAsync($"geo {version}");
-            return 0;
-        }
-
         if (!dependencies.Geolocation.IsAvailable)
         {
-            return await Write(HumanLookupOutput.MissingDatabase());
+            return Write(HumanLookupOutput.MissingDatabase());
         }
 
-        return await RunLookup(cancellationToken);
+        return RunConfiguredLookup(cancellationToken);
     }
 
-    private async ValueTask<int> RunLookup(CancellationToken cancellationToken)
+    private async ValueTask<int> RunConfiguredLookup(
+        CancellationToken cancellationToken)
     {
-        var response = await dependencies.PublicIp.GetIpifyIPv4(
-            cancellationToken);
-        var address = IPAddress.Parse(response.Trim());
-
-        if (address.AddressFamily != AddressFamily.InterNetwork)
+        PublicIpResponse response;
+        try
         {
-            return 1;
+            response = await dependencies.PublicIp.GetIpifyIPv4(
+                cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            return await Write(HumanLookupOutput.PublicAddressUnavailable());
+        }
+
+        if (response is not PublicIpResponse.Received received)
+        {
+            return await Write(HumanLookupOutput.PublicAddressUnavailable());
+        }
+
+        if (!IPAddress.TryParse(received.Content.Trim(), out var address) ||
+            address.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return await Write(HumanLookupOutput.PublicAddressUnavailable());
         }
 
         var lookup = dependencies.Geolocation.Lookup(address);
         var outcome = LookupDecision.Decide(address, lookup);
 
         return await Write(HumanLookupOutput.Render(outcome));
+    }
+
+    private static string GetVersion()
+    {
+        var informationalVersion = typeof(GeoApplication).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
+            .InformationalVersion;
+        return informationalVersion.Split('+', 2)[0];
     }
 
     private async ValueTask<int> Write(CommandResult result)
