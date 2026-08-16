@@ -1,6 +1,13 @@
 namespace EgressGeo;
 
-public sealed record UserTimerState(
-    bool IsAvailable,
-    bool IsEnabled,
-    bool IsActive);
+public abstract record UserTimerState
+{
+    private UserTimerState()
+    {
+    }
+
+    public sealed record Unavailable : UserTimerState;
+
+    public sealed record Available(bool IsEnabled, bool IsActive) :
+        UserTimerState;
+}

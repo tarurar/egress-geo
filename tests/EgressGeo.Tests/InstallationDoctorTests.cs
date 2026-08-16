@@ -212,8 +212,7 @@ public sealed class InstallationDoctorTests
         var doctor = environment.CreateDoctor(
             CurrentTime - TimeSpan.FromDays(2),
             Snapshot(CurrentTime - TimeSpan.FromHours(1)),
-            timerState: new UserTimerState(
-                IsAvailable: true,
+            timerState: new UserTimerState.Available(
                 IsEnabled: false,
                 IsActive: false));
 
@@ -289,6 +288,48 @@ public sealed class InstallationDoctorTests
                 "IPv6 endpoints",
                 "unavailable; IPv6 may not be configured"),
             FindCheck(report, "IPv6 endpoints"));
+    }
+
+    [TestMethod]
+    public async Task Timer_timeout_fails_without_stopping_later_checks()
+    {
+        using var environment = new DoctorTestEnvironment();
+        environment.CreateHealthyFiles();
+        var timeProvider = new FakeTimeProvider(CurrentTime);
+        var doctor = environment.CreateDoctor(
+            CurrentTime - TimeSpan.FromDays(2),
+            Snapshot(CurrentTime - TimeSpan.FromHours(1)),
+            timeProvider: timeProvider,
+            timerStateReader: new NeverUserTimerStateReader());
+        var examining = doctor.Examine(CancellationToken.None).AsTask();
+
+        timeProvider.Advance(TimeSpan.FromSeconds(2));
+        var report = await examining.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual(
+            new DoctorCheck(
+                DoctorCheckStatus.Failed,
+                "update timer",
+                "state check timed out; inspect user systemd"),
+            FindCheck(report, "update timer"));
+        Assert.AreEqual(
+            DoctorCheckStatus.Healthy,
+            FindCheck(report, "cache").Status);
+        Assert.HasCount(8, report.Checks);
+    }
+
+    [TestMethod]
+    public async Task Unexpected_cache_failure_escapes_diagnostics()
+    {
+        using var environment = new DoctorTestEnvironment();
+        environment.CreateHealthyFiles();
+        var doctor = environment.CreateDoctor(
+            CurrentTime - TimeSpan.FromDays(2),
+            Snapshot(CurrentTime - TimeSpan.FromHours(1)),
+            cache: new FailingEgressSnapshotCache());
+
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+            () => doctor.Examine(CancellationToken.None).AsTask());
     }
 
     private static DoctorCheck FindCheck(DoctorReport report, string name) =>
@@ -380,17 +421,18 @@ public sealed class InstallationDoctorTests
             IPublicIpClient? publicIp = null,
             UserTimerState? timerState = null,
             TimeProvider? timeProvider = null,
-            bool databaseAvailable = true) =>
+            bool databaseAvailable = true,
+            IUserTimerStateReader? timerStateReader = null,
+            IEgressSnapshotCache? cache = null) =>
             new(
                 Paths,
                 publicIp ?? new ReachablePublicIpClient(),
                 new FakeGeolocationDatabase(
                     databaseBuildTime,
                     databaseAvailable),
-                new FakeEgressSnapshotCache(snapshot),
-                new FakeUserTimerStateReader(
-                    timerState ?? new UserTimerState(
-                        IsAvailable: true,
+                cache ?? new FakeEgressSnapshotCache(snapshot),
+                timerStateReader ?? new FakeUserTimerStateReader(
+                    timerState ?? new UserTimerState.Available(
                         IsEnabled: true,
                         IsActive: true)),
                 timeProvider ?? new FakeTimeProvider(CurrentTime));
@@ -499,11 +541,34 @@ public sealed class InstallationDoctorTests
                 "Doctor must not write the egress cache.");
     }
 
+    private sealed class FailingEgressSnapshotCache : IEgressSnapshotCache
+    {
+        public ValueTask<CachedEgressSnapshot?> Read(
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Unexpected cache failure.");
+
+        public ValueTask Write(
+            CachedEgressSnapshot snapshot,
+            CancellationToken cancellationToken) =>
+            throw new AssertFailedException(
+                "Doctor must not write the egress cache.");
+    }
+
     private sealed class FakeUserTimerStateReader(UserTimerState state) :
         IUserTimerStateReader
     {
         public ValueTask<UserTimerState> Read(
             CancellationToken cancellationToken) =>
             ValueTask.FromResult(state);
+    }
+
+    private sealed class NeverUserTimerStateReader : IUserTimerStateReader
+    {
+        public async ValueTask<UserTimerState> Read(
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new AssertFailedException("The infinite delay completed.");
+        }
     }
 }

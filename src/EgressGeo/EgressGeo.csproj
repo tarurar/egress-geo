@@ -10,4 +10,8 @@
   <ItemGroup>
     <PackageReference Include="MaxMind.GeoIP2" />
   </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EgressGeo.Tests" />
+  </ItemGroup>
 </Project>

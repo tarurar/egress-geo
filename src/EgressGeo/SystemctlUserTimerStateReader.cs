@@ -3,16 +3,29 @@ using System.Diagnostics;
 
 namespace EgressGeo;
 
-public sealed class SystemctlUserTimerStateReader(string executable) :
-    IUserTimerStateReader
+public sealed class SystemctlUserTimerStateReader : IUserTimerStateReader
 {
     private const string TimerUnit = "egress-geo-update.timer";
-    private readonly string executable =
-        string.IsNullOrWhiteSpace(executable)
+    private readonly string executable;
+    private readonly Func<ProcessStartInfo, Process?> startProcess;
+
+    public SystemctlUserTimerStateReader(string executable)
+        : this(executable, Process.Start)
+    {
+    }
+
+    internal SystemctlUserTimerStateReader(
+        string executable,
+        Func<ProcessStartInfo, Process?> startProcess)
+    {
+        this.executable = string.IsNullOrWhiteSpace(executable)
             ? throw new ArgumentException(
                 "The systemctl executable is required.",
                 nameof(executable))
             : executable;
+        this.startProcess = startProcess ??
+            throw new ArgumentNullException(nameof(startProcess));
+    }
 
     public SystemctlUserTimerStateReader()
         : this("systemctl")
@@ -26,13 +39,14 @@ public sealed class SystemctlUserTimerStateReader(string executable) :
         var active = await Query("is-active", cancellationToken);
         var available = enabled is not null && active is not null &&
             enabled.State.Length > 0 && active.State.Length > 0;
-        return new UserTimerState(
-            available,
-            IsEnabled(enabled?.State),
-            string.Equals(
-                active?.State,
-                "active",
-                StringComparison.Ordinal));
+        return available
+            ? new UserTimerState.Available(
+                IsEnabled(enabled?.State),
+                string.Equals(
+                    active?.State,
+                    "active",
+                    StringComparison.Ordinal))
+            : new UserTimerState.Unavailable();
     }
 
     private async ValueTask<SystemctlResult?> Query(
@@ -42,10 +56,9 @@ public sealed class SystemctlUserTimerStateReader(string executable) :
         Process? process;
         try
         {
-            process = Process.Start(CreateStartInfo(operation));
+            process = startProcess(CreateStartInfo(operation));
         }
-        catch (Exception exception)
-            when (exception is Win32Exception or InvalidOperationException)
+        catch (Win32Exception)
         {
             return null;
         }

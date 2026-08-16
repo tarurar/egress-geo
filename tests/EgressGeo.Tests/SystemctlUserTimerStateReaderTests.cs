@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text;
 
@@ -19,8 +21,7 @@ public sealed class SystemctlUserTimerStateReaderTests
         var state = await reader.Read(CancellationToken.None);
 
         Assert.AreEqual(
-            new UserTimerState(
-                IsAvailable: true,
+            new UserTimerState.Available(
                 IsEnabled: true,
                 IsActive: true),
             state);
@@ -44,11 +45,35 @@ public sealed class SystemctlUserTimerStateReaderTests
         var state = await reader.Read(CancellationToken.None);
 
         Assert.AreEqual(
-            new UserTimerState(
-                IsAvailable: true,
+            new UserTimerState.Available(
                 IsEnabled: false,
                 IsActive: false),
             state);
+    }
+
+    [TestMethod]
+    public async Task Read_does_not_translate_unexpected_start_failure()
+    {
+        var reader = new SystemctlUserTimerStateReader(
+            "systemctl",
+            static _ => throw new InvalidOperationException(
+                "Unexpected process start failure."));
+
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+            () => reader.Read(CancellationToken.None).AsTask());
+    }
+
+    [TestMethod]
+    public async Task Read_translates_expected_start_failure_to_unavailable()
+    {
+        var reader = new SystemctlUserTimerStateReader(
+            "systemctl",
+            static _ => throw new Win32Exception(
+                "The systemctl executable is unavailable."));
+
+        var state = await reader.Read(CancellationToken.None);
+
+        Assert.AreEqual(new UserTimerState.Unavailable(), state);
     }
 
     private sealed class FakeSystemctl : IDisposable

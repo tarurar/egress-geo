@@ -81,4 +81,48 @@ public sealed class UserDataPathsTests
             Environment.SetEnvironmentVariable("XDG_CACHE_HOME", previousCache);
         }
     }
+
+    [TestMethod]
+    [DataRow("XDG_DATA_HOME")]
+    [DataRow("XDG_CONFIG_HOME")]
+    [DataRow("XDG_CACHE_HOME")]
+    public void Doctor_paths_reject_relative_XDG_homes(string variable)
+    {
+        var variables = new[]
+        {
+            "XDG_DATA_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+        };
+        var previous = variables.ToDictionary(
+            name => name,
+            Environment.GetEnvironmentVariable);
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"egress-geo-xdg-{Guid.NewGuid():N}");
+        try
+        {
+            foreach (var name in variables)
+            {
+                Environment.SetEnvironmentVariable(
+                    name,
+                    Path.Combine(root, name));
+            }
+
+            Environment.SetEnvironmentVariable(variable, "relative/path");
+
+            var exception = Assert.ThrowsExactly<InvalidOperationException>(
+                UserDataPaths.GetDoctorPaths);
+            Assert.AreEqual(
+                $"{variable} must be an absolute path.",
+                exception.Message);
+        }
+        finally
+        {
+            foreach (var (name, value) in previous)
+            {
+                Environment.SetEnvironmentVariable(name, value);
+            }
+        }
+    }
 }

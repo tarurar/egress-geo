@@ -1,8 +1,12 @@
+using System.ComponentModel;
+using System.Diagnostics;
+
 namespace EgressGeo;
 
 public sealed class InstallationDoctor : IInstallationDoctor
 {
     private static readonly TimeSpan EndpointBudget = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan TimerBudget = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaximumDatabaseAge = TimeSpan.FromDays(30);
     private const UnixFileMode GroupAndOtherPermissions =
         UnixFileMode.GroupRead |
@@ -193,44 +197,60 @@ public sealed class InstallationDoctor : IInstallationDoctor
                 "service or timer unit is missing; re-run install.sh");
         }
 
+        using var timeout = new CancellationTokenSource(
+            TimerBudget,
+            timeProvider);
+        using var request = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            timeout.Token);
         try
         {
-            return DescribeTimerState(
-                await timerState.Read(cancellationToken));
+            var state = await timerState
+                .Read(request.Token)
+                .AsTask()
+                .WaitAsync(request.Token);
+            return DescribeTimerState(state);
+        }
+        catch (OperationCanceledException)
+            when (timeout.IsCancellationRequested &&
+                !cancellationToken.IsCancellationRequested)
+        {
+            return Failed(
+                "update timer",
+                "state check timed out; inspect user systemd");
         }
         catch (OperationCanceledException)
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception exception)
+            when (IsTimerInspectionFailure(exception))
         {
             return Failed("update timer", "user systemd state is unavailable");
         }
     }
 
-    private static DoctorCheck DescribeTimerState(UserTimerState state)
-    {
-        if (!state.IsAvailable)
+    private static DoctorCheck DescribeTimerState(UserTimerState state) =>
+        state switch
         {
-            return Failed("update timer", "user systemd state is unavailable");
-        }
-
-        if (!state.IsEnabled && !state.IsActive)
-        {
-            return Failed(
+            UserTimerState.Unavailable => Failed(
                 "update timer",
-                "disabled and inactive; re-run install.sh");
-        }
-
-        if (!state.IsEnabled)
-        {
-            return Failed("update timer", "active but disabled; re-run install.sh");
-        }
-
-        return state.IsActive
-            ? Healthy("update timer", "installed, enabled, and active")
-            : Failed("update timer", "enabled but inactive; re-run install.sh");
-    }
+                "user systemd state is unavailable"),
+            UserTimerState.Available(false, false) => Failed(
+                "update timer",
+                "disabled and inactive; re-run install.sh"),
+            UserTimerState.Available(false, true) => Failed(
+                "update timer",
+                "active but disabled; re-run install.sh"),
+            UserTimerState.Available(true, false) => Failed(
+                "update timer",
+                "enabled but inactive; re-run install.sh"),
+            UserTimerState.Available(true, true) => Healthy(
+                "update timer",
+                "installed, enabled, and active"),
+            _ => throw new UnreachableException(
+                "Unknown user timer state."),
+        };
 
     private async ValueTask<DoctorCheck> CheckCache(
         DateTimeOffset currentTime,
@@ -252,7 +272,8 @@ public sealed class InstallationDoctor : IInstallationDoctor
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception exception)
+            when (IsFileInspectionFailure(exception))
         {
             return Failed("cache", "cannot read the cache file");
         }
@@ -346,8 +367,9 @@ public sealed class InstallationDoctor : IInstallationDoctor
         {
             return false;
         }
-        catch (Exception)
-            when (!callerCancellationToken.IsCancellationRequested)
+        catch (Exception exception)
+            when (!callerCancellationToken.IsCancellationRequested &&
+                IsEndpointFailure(exception))
         {
             return false;
         }
@@ -387,6 +409,13 @@ public sealed class InstallationDoctor : IInstallationDoctor
     private static bool IsFileInspectionFailure(Exception exception) =>
         exception is IOException or UnauthorizedAccessException or
             NotSupportedException;
+
+    private static bool IsTimerInspectionFailure(Exception exception) =>
+        exception is IOException or UnauthorizedAccessException or
+            Win32Exception;
+
+    private static bool IsEndpointFailure(Exception exception) =>
+        exception is HttpRequestException or IOException or TimeoutException;
 
     private static string DescribeAge(TimeSpan age)
     {

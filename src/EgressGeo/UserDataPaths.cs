@@ -38,10 +38,16 @@ public static class UserDataPaths
         params string[] fallbackSegments)
     {
         var configured = Environment.GetEnvironmentVariable(variable);
-        return string.IsNullOrWhiteSpace(configured)
-            ? Path.Combine(
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                Path.Combine(fallbackSegments))
-            : configured;
+                Path.Combine(fallbackSegments));
+        }
+
+        return Path.IsPathFullyQualified(configured)
+            ? configured
+            : throw new InvalidOperationException(
+                $"{variable} must be an absolute path.");
     }
 }
