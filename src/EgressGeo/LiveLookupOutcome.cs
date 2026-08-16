@@ -12,15 +12,7 @@ internal sealed record LiveLookupOutcome(
                 ? LiveLookupStatus.Healthy
                 : LiveLookupStatus.Failed;
 
-    internal int ExitCode =>
-        Status switch
-        {
-            LiveLookupStatus.Healthy => 0,
-            LiveLookupStatus.CountryMismatch => 2,
-            LiveLookupStatus.Failed => 1,
-            _ => throw new InvalidOperationException(
-                $"Unknown live lookup status: {Status}"),
-        };
+    internal int ExitCode => Status.ExitCode;
 
     internal bool HasCountryMismatch =>
         IPv4 is LookupOutcome.Found ipv4 &&

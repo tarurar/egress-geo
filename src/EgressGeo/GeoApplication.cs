@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Reflection;
 
 namespace EgressGeo;
@@ -56,16 +54,10 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
 
         var ipv4Task = Discover(
             IpFamily.IPv4,
-            AddressFamily.InterNetwork,
-            dependencies.PublicIp.GetIpifyIPv4,
-            dependencies.PublicIp.GetIdentMeIPv4,
             liveDiscovery.Token,
             cancellationToken).AsTask();
         var ipv6Task = Discover(
             IpFamily.IPv6,
-            AddressFamily.InterNetworkV6,
-            dependencies.PublicIp.GetIpifyIPv6,
-            dependencies.PublicIp.GetIdentMeIPv6,
             liveDiscovery.Token,
             cancellationToken).AsTask();
 
@@ -80,9 +72,6 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
 
     private async ValueTask<PublicIpDiscovery> Discover(
         IpFamily family,
-        AddressFamily addressFamily,
-        Func<CancellationToken, ValueTask<PublicIpResponse>> primary,
-        Func<CancellationToken, ValueTask<PublicIpResponse>> fallback,
         CancellationToken liveDiscoveryToken,
         CancellationToken callerCancellationToken)
     {
@@ -94,37 +83,59 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
                 liveDiscoveryToken,
                 primaryDeadline.Token);
 
-        var response = await RequestPublicIp(
-            primary,
+        var publicIp = await DiscoverFromProvider(
+            family,
+            PublicIpProvider.Ipify,
             primaryRequest.Token,
             callerCancellationToken);
-        var address = Parse(response, addressFamily);
-        if (address is not null)
+        if (publicIp is not null)
         {
-            return new PublicIpDiscovery.Found(
-                new DiscoveredPublicIp(
-                    family,
-                    address,
-                    PublicIpProvider.Ipify));
+            return new PublicIpDiscovery.Found(publicIp);
         }
 
         if (!liveDiscoveryToken.IsCancellationRequested)
         {
-            response = await RequestPublicIp(
-                fallback,
+            publicIp = await DiscoverFromProvider(
+                family,
+                PublicIpProvider.IdentMe,
                 liveDiscoveryToken,
                 callerCancellationToken);
-            address = Parse(response, addressFamily);
         }
 
-        return address is null
+        return publicIp is null
             ? new PublicIpDiscovery.Unavailable(family)
-            : new PublicIpDiscovery.Found(
-                new DiscoveredPublicIp(
-                    family,
-                    address,
-                    PublicIpProvider.IdentMe));
+            : new PublicIpDiscovery.Found(publicIp);
     }
+
+    private async ValueTask<DiscoveredPublicIp?> DiscoverFromProvider(
+        IpFamily family,
+        PublicIpProvider provider,
+        CancellationToken requestToken,
+        CancellationToken callerCancellationToken)
+    {
+        var response = await RequestPublicIp(
+            GetRequest(family, provider),
+            requestToken,
+            callerCancellationToken);
+        return Parse(response, family, provider);
+    }
+
+    private Func<CancellationToken, ValueTask<PublicIpResponse>> GetRequest(
+        IpFamily family,
+        PublicIpProvider provider) =>
+        (family, provider) switch
+        {
+            (IpFamily.IPv4, PublicIpProvider.Ipify) =>
+                dependencies.PublicIp.GetIpifyIPv4,
+            (IpFamily.IPv4, PublicIpProvider.IdentMe) =>
+                dependencies.PublicIp.GetIdentMeIPv4,
+            (IpFamily.IPv6, PublicIpProvider.Ipify) =>
+                dependencies.PublicIp.GetIpifyIPv6,
+            (IpFamily.IPv6, PublicIpProvider.IdentMe) =>
+                dependencies.PublicIp.GetIdentMeIPv6,
+            _ => throw new InvalidOperationException(
+                $"Unknown public IP request: {family}, {provider}"),
+        };
 
     private static async ValueTask<PublicIpResponse> RequestPublicIp(
         Func<CancellationToken, ValueTask<PublicIpResponse>> request,
@@ -144,27 +155,13 @@ public sealed class GeoApplication(GeoApplicationDependencies dependencies)
         }
     }
 
-    private static IPAddress? Parse(
+    private static DiscoveredPublicIp? Parse(
         PublicIpResponse response,
-        AddressFamily requiredFamily)
-    {
-        if (response is not PublicIpResponse.Received received)
-        {
-            return null;
-        }
-
-        var candidate = received.Content.Trim();
-        if (!IPAddress.TryParse(candidate, out var address) ||
-            address.AddressFamily != requiredFamily ||
-            requiredFamily == AddressFamily.InterNetwork &&
-            !string.Equals(candidate, address.ToString(),
-                StringComparison.Ordinal))
-        {
-            return null;
-        }
-
-        return address;
-    }
+        IpFamily family,
+        PublicIpProvider provider) =>
+        response is PublicIpResponse.Received received
+            ? DiscoveredPublicIp.Parse(received.Content, family, provider)
+            : null;
 
     private LookupOutcome Locate(PublicIpDiscovery discovery) =>
         discovery switch

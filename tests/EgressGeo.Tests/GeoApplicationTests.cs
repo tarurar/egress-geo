@@ -78,6 +78,32 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
+    public async Task Lookup_shows_discovered_family_without_location()
+    {
+        var ipv4Address = IPAddress.Parse("203.0.113.7");
+        var ipv6Address = IPAddress.Parse("2001:db8::7");
+        var publicIp = new DualStackPublicIpClient(
+            ipv4Address.ToString(),
+            ipv6Address.ToString());
+        var geolocation = new DualStackGeolocationDatabase(
+            ipv4Address,
+            new GeolocationLookup.Found("Manama", "BH"),
+            ipv6Address,
+            new GeolocationLookup.Found("Riffa", null));
+
+        var result = await RunApplication([], publicIp, geolocation);
+
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.AreEqual(
+            "Approximate location (IPv4): 🇧🇭 Manama, BH\n" +
+            "Public address (IPv4): 203.0.113.7\n" +
+            "Approximate location (IPv6): unavailable\n" +
+            "Public address (IPv6): 2001:db8::7\n",
+            result.Output);
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
     public async Task Lookup_warns_when_family_countries_differ()
     {
         var ipv4Address = IPAddress.Parse("203.0.113.7");
@@ -109,7 +135,7 @@ public sealed class GeoApplicationTests
     public async Task Lookup_prints_approximate_IPv6_location()
     {
         var address = IPAddress.Parse("2001:db8::7");
-        var publicIp = new OrderedIPv6PublicIpClient(
+        var publicIp = OrderedPublicIpClient.ForIPv6(
             _ => ReceivedResponse(address.ToString()),
             _ => throw new AssertFailedException(
                 "Primary success must not contact the fallback provider."));
@@ -131,7 +157,7 @@ public sealed class GeoApplicationTests
     public async Task Lookup_reports_missing_IPv6_country_as_unavailable()
     {
         var address = IPAddress.Parse("2001:db8::7");
-        var publicIp = new OrderedIPv6PublicIpClient(
+        var publicIp = OrderedPublicIpClient.ForIPv6(
             _ => ReceivedResponse(address.ToString()),
             _ => throw new AssertFailedException(
                 "Primary success must not contact the fallback provider."));
@@ -153,7 +179,7 @@ public sealed class GeoApplicationTests
     public async Task Lookup_uses_ident_me_when_IPv6_ipify_fails()
     {
         var address = IPAddress.Parse("2001:db8::7");
-        var publicIp = new OrderedIPv6PublicIpClient(
+        var publicIp = OrderedPublicIpClient.ForIPv6(
             _ => UnavailableResponse(),
             _ => ReceivedResponse(address.ToString()));
         var geolocation = new FakeGeolocationDatabase(
@@ -340,7 +366,7 @@ public sealed class GeoApplicationTests
     [TestMethod]
     public async Task Lookup_uses_ident_me_when_ipify_request_fails()
     {
-        var publicIp = new OrderedPublicIpClient(
+        var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => UnavailableResponse(),
             _ => ReceivedResponse("203.0.113.7"));
 
@@ -353,7 +379,7 @@ public sealed class GeoApplicationTests
     public async Task Lookup_uses_ident_me_when_ipify_times_out()
     {
         var timeProvider = new FakeTimeProvider();
-        var publicIp = new OrderedPublicIpClient(
+        var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => NeverResponse(),
             _ => ReceivedResponse("203.0.113.7"));
 
@@ -367,7 +393,7 @@ public sealed class GeoApplicationTests
     [TestMethod]
     public async Task Lookup_rejects_ambiguous_ipify_response_before_fallback()
     {
-        var publicIp = new OrderedPublicIpClient(
+        var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => ReceivedResponse("127.1"),
             _ => ReceivedResponse("203.0.113.7"));
 
@@ -435,7 +461,7 @@ public sealed class GeoApplicationTests
     {
         var result = await RunApplication(
             [],
-            new OrderedPublicIpClient(
+            OrderedPublicIpClient.ForIPv4(
                 _ => UnavailableResponse(),
                 _ => UnavailableResponse()),
             new AvailableUnexpectedGeolocationDatabase());
@@ -453,7 +479,7 @@ public sealed class GeoApplicationTests
         var timeProvider = new FakeTimeProvider();
         var fallbackStarted = new TaskCompletionSource<bool>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var publicIp = new OrderedPublicIpClient(
+        var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => NeverResponse(),
             _ =>
             {
@@ -483,7 +509,7 @@ public sealed class GeoApplicationTests
     {
         var result = await RunApplication(
             [],
-            new OrderedPublicIpClient(
+            OrderedPublicIpClient.ForIPv4(
                 _ => UnavailableResponse(),
                 _ => ReceivedResponse("not an address")),
             new AvailableUnexpectedGeolocationDatabase());
@@ -498,7 +524,7 @@ public sealed class GeoApplicationTests
     [TestMethod]
     public async Task Lookup_uses_ident_me_after_malformed_ipify_response()
     {
-        var publicIp = new OrderedPublicIpClient(
+        var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => ReceivedResponse("not an address"),
             _ => ReceivedResponse("203.0.113.7"));
 
@@ -510,7 +536,7 @@ public sealed class GeoApplicationTests
     [TestMethod]
     public async Task Lookup_uses_ident_me_after_IPv6_from_ipify()
     {
-        var publicIp = new OrderedPublicIpClient(
+        var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => ReceivedResponse("2001:db8::1"),
             _ => ReceivedResponse("203.0.113.7"));
 
@@ -522,7 +548,7 @@ public sealed class GeoApplicationTests
     [TestMethod]
     public async Task Lookup_uses_ident_me_after_multiple_ipify_addresses()
     {
-        var publicIp = new OrderedPublicIpClient(
+        var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => ReceivedResponse("203.0.113.7\n198.51.100.5"),
             _ => ReceivedResponse("203.0.113.7"));
 
@@ -686,14 +712,6 @@ public sealed class GeoApplicationTests
             CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "Primary success must not contact the fallback provider.");
-
-        public ValueTask<PublicIpResponse> GetIpifyIPv6(
-            CancellationToken cancellationToken) =>
-            UnavailableResponse();
-
-        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
-            CancellationToken cancellationToken) =>
-            UnavailableResponse();
     }
 
     private sealed class DualStackPublicIpClient(
@@ -719,68 +737,86 @@ public sealed class GeoApplicationTests
                 "IPv6 primary success must not contact its fallback.");
     }
 
-    private sealed class OrderedPublicIpClient(
-        Func<CancellationToken, ValueTask<PublicIpResponse>> ipify,
-        Func<CancellationToken, ValueTask<PublicIpResponse>> identMe) :
-        IPublicIpClient
+    private sealed class OrderedPublicIpClient : IPublicIpClient
     {
+        private readonly RequestedIpFamily family;
+        private readonly Func<
+            CancellationToken,
+            ValueTask<PublicIpResponse>> ipify;
+        private readonly Func<
+            CancellationToken,
+            ValueTask<PublicIpResponse>> identMe;
         private bool ipifyRequested;
 
+        private OrderedPublicIpClient(
+            RequestedIpFamily family,
+            Func<CancellationToken, ValueTask<PublicIpResponse>> ipify,
+            Func<CancellationToken, ValueTask<PublicIpResponse>> identMe)
+        {
+            this.family = family;
+            this.ipify = ipify;
+            this.identMe = identMe;
+        }
+
+        internal static OrderedPublicIpClient ForIPv4(
+            Func<CancellationToken, ValueTask<PublicIpResponse>> ipify,
+            Func<CancellationToken, ValueTask<PublicIpResponse>> identMe) =>
+            new(RequestedIpFamily.IPv4, ipify, identMe);
+
+        internal static OrderedPublicIpClient ForIPv6(
+            Func<CancellationToken, ValueTask<PublicIpResponse>> ipify,
+            Func<CancellationToken, ValueTask<PublicIpResponse>> identMe) =>
+            new(RequestedIpFamily.IPv6, ipify, identMe);
+
         public ValueTask<PublicIpResponse> GetIpifyIPv4(
+            CancellationToken cancellationToken) =>
+            GetIpify(RequestedIpFamily.IPv4, cancellationToken);
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+            CancellationToken cancellationToken) =>
+            GetIdentMe(RequestedIpFamily.IPv4, cancellationToken);
+
+        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+            CancellationToken cancellationToken) =>
+            GetIpify(RequestedIpFamily.IPv6, cancellationToken);
+
+        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+            CancellationToken cancellationToken) =>
+            GetIdentMe(RequestedIpFamily.IPv6, cancellationToken);
+
+        private ValueTask<PublicIpResponse> GetIpify(
+            RequestedIpFamily requestedFamily,
             CancellationToken cancellationToken)
         {
+            if (requestedFamily != family)
+            {
+                return UnavailableResponse();
+            }
+
             ipifyRequested = true;
             return ipify(cancellationToken);
         }
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+        private ValueTask<PublicIpResponse> GetIdentMe(
+            RequestedIpFamily requestedFamily,
             CancellationToken cancellationToken)
         {
+            if (requestedFamily != family)
+            {
+                return UnavailableResponse();
+            }
+
             Assert.IsTrue(
                 ipifyRequested,
                 "ipify must be requested before ident.me.");
             return identMe(cancellationToken);
         }
-
-        public ValueTask<PublicIpResponse> GetIpifyIPv6(
-            CancellationToken cancellationToken) =>
-            UnavailableResponse();
-
-        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
-            CancellationToken cancellationToken) =>
-            UnavailableResponse();
     }
 
-    private sealed class OrderedIPv6PublicIpClient(
-        Func<CancellationToken, ValueTask<PublicIpResponse>> ipify,
-        Func<CancellationToken, ValueTask<PublicIpResponse>> identMe) :
-        IPublicIpClient
+    private enum RequestedIpFamily
     {
-        private bool ipifyRequested;
-
-        public ValueTask<PublicIpResponse> GetIpifyIPv4(
-            CancellationToken cancellationToken) =>
-            UnavailableResponse();
-
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
-            CancellationToken cancellationToken) =>
-            UnavailableResponse();
-
-        public ValueTask<PublicIpResponse> GetIpifyIPv6(
-            CancellationToken cancellationToken)
-        {
-            ipifyRequested = true;
-            return ipify(cancellationToken);
-        }
-
-        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
-            CancellationToken cancellationToken)
-        {
-            Assert.IsTrue(
-                ipifyRequested,
-                "ipify must be requested before ident.me.");
-            return identMe(cancellationToken);
-        }
+        IPv4,
+        IPv6,
     }
 
     private sealed class DelayedFallbackPublicIpClient(

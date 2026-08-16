@@ -14,7 +14,7 @@ internal static class JsonLookupOutput
             .OfType<JsonFamily>()
             .ToArray();
         var document = new JsonLookup(
-            GetStatus(outcome.Status),
+            outcome.Status.Value,
             outcome.ObservedAt,
             false,
             null,
@@ -44,16 +44,6 @@ internal static class JsonLookupOutput
                 null,
                 GetSource(unavailable.PublicIp.Provider)),
             _ => null,
-        };
-
-    private static string GetStatus(LiveLookupStatus status) =>
-        status switch
-        {
-            LiveLookupStatus.Healthy => "healthy",
-            LiveLookupStatus.CountryMismatch => "country-mismatch",
-            LiveLookupStatus.Failed => "failed",
-            _ => throw new InvalidOperationException(
-                $"Unknown live lookup status: {status}"),
         };
 
     private static IReadOnlyList<string> GetWarnings(

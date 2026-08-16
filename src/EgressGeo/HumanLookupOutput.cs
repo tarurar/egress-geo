@@ -4,47 +4,65 @@ internal static class HumanLookupOutput
 {
     internal static CommandResult Render(LiveLookupOutcome outcome)
     {
-        var locations = new[] { outcome.IPv4, outcome.IPv6 }
+        var familyOutcomes = new[] { outcome.IPv4, outcome.IPv6 };
+        var locations = familyOutcomes
             .OfType<LookupOutcome.Found>()
             .ToArray();
-        if (locations.Length > 0)
-        {
-            return locations.Length == 2 && !SameLocation(locations)
-                ? RenderSeparate(
-                    locations,
-                    outcome.HasCountryMismatch)
-                : RenderCompact(locations);
-        }
+        return locations.Length > 0
+            ? RenderAvailable(outcome, familyOutcomes, locations)
+            : RenderUnavailable(familyOutcomes);
+    }
 
-        var unavailable = new[] { outcome.IPv4, outcome.IPv6 };
-        if (unavailable.Any(
+    private static CommandResult RenderAvailable(
+        LiveLookupOutcome outcome,
+        LookupOutcome[] familyOutcomes,
+        LookupOutcome.Found[] locations)
+    {
+        var discovered = familyOutcomes
+            .Where(
+                candidate =>
+                    candidate is LookupOutcome.Found or
+                        LookupOutcome.LocationUnavailable)
+            .ToArray();
+        var canShareLocation = discovered.Length == 1 ||
+            (locations.Length == 2 && SameLocation(locations));
+        return canShareLocation
+            ? RenderCompact(locations)
+            : RenderSeparate(discovered, outcome.HasCountryMismatch);
+    }
+
+    private static CommandResult RenderUnavailable(
+        LookupOutcome[] familyOutcomes)
+    {
+        if (familyOutcomes.Any(
                 candidate =>
                     candidate is LookupOutcome.DatabaseUnavailable))
         {
             return MissingDatabase();
         }
 
-        var locationUnavailable = unavailable
+        var locationUnavailable = familyOutcomes
             .OfType<LookupOutcome.LocationUnavailable>()
             .FirstOrDefault();
         if (locationUnavailable is not null)
         {
-            return RenderUnavailable(locationUnavailable)!;
+            return RenderUnavailableFamily(locationUnavailable)!;
         }
 
-        if (unavailable.All(
+        if (familyOutcomes.All(
                 candidate =>
                     candidate is LookupOutcome.PublicAddressUnavailable))
         {
             return PublicAddressesUnavailable();
         }
 
-        return unavailable
-            .Select(RenderUnavailable)
+        return familyOutcomes
+            .Select(RenderUnavailableFamily)
             .First(result => result is not null)!;
     }
 
-    private static CommandResult? RenderUnavailable(LookupOutcome outcome) =>
+    private static CommandResult? RenderUnavailableFamily(
+        LookupOutcome outcome) =>
         outcome switch
         {
             LookupOutcome.LocationUnavailable unavailable => new CommandResult(
@@ -85,18 +103,20 @@ internal static class HumanLookupOutput
         var found = locations[0];
         var output =
             $"Approximate location: {RenderLocation(found)}\n" +
-            string.Concat(locations.Select(RenderAddress));
+            string.Concat(
+                locations.Select(
+                    location => RenderAddress(location.PublicIp)));
 
         return new CommandResult(0, output, string.Empty);
     }
 
     private static CommandResult RenderSeparate(
-        LookupOutcome.Found[] locations,
+        LookupOutcome[] outcomes,
         bool hasCountryMismatch) =>
         new(
             hasCountryMismatch ? 2 : 0,
             RenderMismatchWarning(hasCountryMismatch) +
-            string.Concat(locations.Select(RenderLocationRow)),
+            string.Concat(outcomes.Select(RenderLocationRow)),
             string.Empty);
 
     private static string RenderMismatchWarning(bool hasCountryMismatch) =>
@@ -105,10 +125,21 @@ internal static class HumanLookupOutput
                 "to different countries.\n"
             : string.Empty;
 
-    private static string RenderLocationRow(LookupOutcome.Found found) =>
-        $"Approximate location ({found.PublicIp.Family}): " +
-        $"{RenderLocation(found)}\n" +
-        RenderAddress(found);
+    private static string RenderLocationRow(LookupOutcome outcome) =>
+        outcome switch
+        {
+            LookupOutcome.Found found =>
+                $"Approximate location ({found.PublicIp.Family}): " +
+                $"{RenderLocation(found)}\n" +
+                RenderAddress(found.PublicIp),
+            LookupOutcome.LocationUnavailable unavailable =>
+                $"Approximate location " +
+                $"({unavailable.PublicIp.Family}): unavailable\n" +
+                RenderAddress(unavailable.PublicIp),
+            _ => throw new InvalidOperationException(
+                $"Cannot render live family row for " +
+                outcome.GetType().Name),
+        };
 
     private static bool SameLocation(LookupOutcome.Found[] locations) =>
         locations[0].Country == locations[1].Country &&
@@ -123,9 +154,8 @@ internal static class HumanLookupOutput
         return $"{GetFlag(found.Country)} {city}{found.Country}";
     }
 
-    private static string RenderAddress(LookupOutcome.Found found) =>
-        $"Public address ({found.PublicIp.Family}): " +
-        $"{found.PublicIp.Address}\n";
+    private static string RenderAddress(DiscoveredPublicIp publicIp) =>
+        $"Public address ({publicIp.Family}): {publicIp.Address}\n";
 
     private static string GetFlag(CountryCode country) =>
         string.Concat(

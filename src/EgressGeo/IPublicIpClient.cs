@@ -9,8 +9,12 @@ public interface IPublicIpClient
         CancellationToken cancellationToken);
 
     ValueTask<PublicIpResponse> GetIpifyIPv6(
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken) =>
+        ValueTask.FromResult<PublicIpResponse>(
+            new PublicIpResponse.Unavailable());
 
     ValueTask<PublicIpResponse> GetIdentMeIPv6(
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken) =>
+        ValueTask.FromResult<PublicIpResponse>(
+            new PublicIpResponse.Unavailable());
 }
