@@ -7,7 +7,8 @@ var dependencies = new GeoApplicationDependencies(
     new PublicIpHttpClient(httpClient),
     database,
     Console.Out,
-    Console.Error);
+    Console.Error,
+    TimeProvider.System);
 var application = new GeoApplication(dependencies);
 
 return await application.Run(args, CancellationToken.None);

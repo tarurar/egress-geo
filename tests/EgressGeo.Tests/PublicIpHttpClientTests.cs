@@ -6,6 +6,47 @@ namespace EgressGeo.Tests;
 public sealed class PublicIpHttpClientTests
 {
     [TestMethod]
+    public async Task Ident_me_request_uses_IPv4_only_endpoint()
+    {
+        Uri? requestedUri = null;
+        using var http = new HttpClient(
+            new FakeHttpMessageHandler(
+                (request, _) =>
+                {
+                    requestedUri = request.RequestUri;
+                    return Task.FromResult(
+                        new HttpResponseMessage(HttpStatusCode.OK)
+                        {
+                            Content = new StringContent("203.0.113.7"),
+                        });
+                }));
+        var client = new PublicIpHttpClient(http);
+
+        await client.GetIdentMeIPv4(CancellationToken.None);
+
+        Assert.AreEqual(new Uri("https://4.ident.me/"), requestedUri);
+    }
+
+    [TestMethod]
+    public async Task Successful_response_contains_provider_content()
+    {
+        using var http = new HttpClient(
+            new FakeHttpMessageHandler(
+                (_, _) => Task.FromResult(
+                    new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("203.0.113.7"),
+                    })));
+        var client = new PublicIpHttpClient(http);
+
+        var result = await client.GetIpifyIPv4(CancellationToken.None);
+
+        Assert.AreEqual(
+            new PublicIpResponse.Received("203.0.113.7"),
+            result);
+    }
+
+    [TestMethod]
     public async Task Non_success_response_is_unavailable()
     {
         using var http = new HttpClient(

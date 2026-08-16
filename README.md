@@ -1,9 +1,11 @@
 # egress-geo
 
 `geo` reports the approximate city and country of the machine's current public
-IPv4 egress. It discovers only the public address through ipify and resolves
-that address locally with a user-provided GeoLite2 City database. No hosted
-geolocation service receives the address.
+IPv4 egress. It asks ipify for the public address first, falls back to the
+IPv4-only ident.me endpoint after a failed or invalid response, and bounds the
+complete live discovery attempt to approximately two seconds. It resolves the
+address locally with a user-provided GeoLite2 City database, so no hosted
+geolocation service receives the address for lookup.
 
 IP geolocation is approximate. The reported city can represent a nearby
 population center, network registration, or datacenter rather than a physical
