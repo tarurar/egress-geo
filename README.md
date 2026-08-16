@@ -36,6 +36,41 @@ Run the source command with:
 dotnet run --project src/EgressGeo/EgressGeo.csproj
 ```
 
+## Rootless installation
+
+Install or repair `geo` from a source checkout with the .NET 10 SDK available:
+
+```console
+./scripts/install.sh
+```
+
+The installer publishes a framework-dependent Linux x86-64 application to
+`$XDG_DATA_HOME/egress-geo/app`, or
+`$HOME/.local/share/egress-geo/app` when `XDG_DATA_HOME` is unset. It installs
+the launcher at `$HOME/.local/bin/geo`; that directory must be on `PATH`.
+The launcher refers only to the published application, so the source checkout
+is not needed to run the installed command. Re-running the installer replaces
+stale publish sidecars and repairs the launcher without duplicating either.
+
+Until GeoLite onboarding is implemented and run, lookup exits with the exact
+next-step message `Run: geo setup`. The onboarding wizard is tracked
+separately.
+
+The installed uninstaller is kept with the application. Run it with:
+
+```console
+"${XDG_DATA_HOME:-$HOME/.local/share}/egress-geo/app/uninstall.sh"
+```
+
+Default uninstall removes the launcher, published application, and known
+user-systemd unit files. It preserves configuration and credentials under
+`$XDG_CONFIG_HOME/egress-geo`, the database and updater data under
+`$XDG_DATA_HOME/egress-geo`, and snapshots under
+`$XDG_CACHE_HOME/egress-geo`, using the corresponding directories below
+`$HOME` when an XDG variable is unset. Pass `--purge` to remove those retained
+directories as well; purge proceeds only after `PURGE` is entered exactly.
+Installation, uninstall, and purge require no `sudo` and are safe to repeat.
+
 When both families resolve to the same city and country, human output shares
 one location line. Different cities receive separate family rows. Different
 countries also produce a possible-VPN-leak warning and exit `2`; an ordinary
@@ -77,9 +112,8 @@ reuse and cached-only fallback set `cached` to `true` and report the snapshot
 age. The `families` array contains one entry per discovered or cached address;
 unavailable city or country values are explicit JSON `null` values.
 
-The rootless `geo setup` credential wizard is tracked separately and is not
-part of this first lookup milestone. A production GeoLite database and MaxMind
-credentials must never be added to this repository.
+A production GeoLite database and MaxMind credentials must never be added to
+this repository.
 
 ## Development
 

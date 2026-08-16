@@ -23,6 +23,13 @@ jobs:
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
+      - name: Validate shell entry points
+        run: |
+          bash -n scripts/install.sh scripts/uninstall.sh
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck scripts/install.sh scripts/uninstall.sh
+          fi
+
       - name: Restore locked dependencies
         run: dotnet restore egress-geo.slnx --locked-mode
 
