@@ -6,6 +6,7 @@ internal static class CommandLineOutput
         "Usage:\n" +
         "  geo\n" +
         "  geo --json\n" +
+        "  geo doctor\n" +
         "  geo --help\n" +
         "  geo --version\n" +
         "\n" +

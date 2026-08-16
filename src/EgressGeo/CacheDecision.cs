@@ -4,7 +4,7 @@ internal sealed record CacheDecision(
     LookupResult Outcome,
     CachedEgressSnapshot? SnapshotToWrite)
 {
-    private static readonly TimeSpan MaximumCacheAge =
+    internal static readonly TimeSpan MaximumCacheAge =
         TimeSpan.FromHours(24);
 
     internal static CacheDecision Decide(

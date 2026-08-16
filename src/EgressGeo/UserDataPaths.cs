@@ -2,30 +2,46 @@ namespace EgressGeo;
 
 public static class UserDataPaths
 {
-    public static string GetDatabasePath()
-    {
-        var configuredDataHome = Environment.GetEnvironmentVariable(
-            "XDG_DATA_HOME");
-        var dataHome = string.IsNullOrWhiteSpace(configuredDataHome)
-            ? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".local",
-                "share")
-            : configuredDataHome;
-
-        return Path.Combine(dataHome, "egress-geo", "GeoLite2-City.mmdb");
-    }
+    public static string GetDatabasePath() =>
+        Path.Combine(GetDataRoot(), "GeoLite2-City.mmdb");
 
     public static string GetCachePath()
     {
-        var configuredCacheHome = Environment.GetEnvironmentVariable(
-            "XDG_CACHE_HOME");
-        var cacheHome = string.IsNullOrWhiteSpace(configuredCacheHome)
+        return Path.Combine(GetCacheRoot(), "snapshot.json");
+    }
+
+    public static DoctorPaths GetDoctorPaths()
+    {
+        var dataRoot = GetDataRoot();
+        var configHome = GetHome("XDG_CONFIG_HOME", ".config");
+        var unitRoot = Path.Combine(configHome, "systemd", "user");
+        return new DoctorPaths(
+            Path.Combine(dataRoot, "app", "geo"),
+            Path.Combine(dataRoot, "GeoLite2-City.mmdb"),
+            Path.Combine(dataRoot, "updater", "geoipupdate"),
+            Path.Combine(configHome, "egress-geo", "GeoIP.conf"),
+            Path.Combine(unitRoot, "egress-geo-update.service"),
+            Path.Combine(unitRoot, "egress-geo-update.timer"),
+            Path.Combine(GetCacheRoot(), "snapshot.json"));
+    }
+
+    private static string GetDataRoot() =>
+        Path.Combine(
+            GetHome("XDG_DATA_HOME", ".local", "share"),
+            "egress-geo");
+
+    private static string GetCacheRoot() =>
+        Path.Combine(GetHome("XDG_CACHE_HOME", ".cache"), "egress-geo");
+
+    private static string GetHome(
+        string variable,
+        params string[] fallbackSegments)
+    {
+        var configured = Environment.GetEnvironmentVariable(variable);
+        return string.IsNullOrWhiteSpace(configured)
             ? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".cache")
-            : configuredCacheHome;
-
-        return Path.Combine(cacheHome, "egress-geo", "snapshot.json");
+                Path.Combine(fallbackSegments))
+            : configured;
     }
 }

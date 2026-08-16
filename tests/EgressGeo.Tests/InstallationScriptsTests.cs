@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.Versioning;
 using System.Text;
 
 namespace EgressGeo.Tests;
 
 [TestClass]
+[SupportedOSPlatform("linux")]
 public sealed class InstallationScriptsTests
 {
     private static readonly string RepositoryRoot = FindRepositoryRoot();
@@ -48,6 +50,76 @@ public sealed class InstallationScriptsTests
         Assert.AreEqual(0, result.ExitCode, result.Error);
         Assert.IsTrue(File.Exists(environment.ApplicationPath("setup.sh")));
         Assert.IsTrue(File.Exists(environment.ApplicationPath("paths.sh")));
+    }
+
+    [TestMethod]
+    public async Task Install_enables_a_persistent_daily_update_timer()
+    {
+        using var environment = new InstallationTestEnvironment();
+
+        var result = await environment.RunScript("install.sh");
+
+        Assert.AreEqual(0, result.ExitCode, result.Error);
+        Assert.IsTrue(File.Exists(environment.UpdateServicePath));
+        Assert.AreEqual(
+            "[Unit]\n" +
+            "Description=Update the egress-geo GeoLite2 City database daily\n" +
+            "\n" +
+            "[Timer]\n" +
+            "OnCalendar=daily\n" +
+            "Persistent=true\n" +
+            "RandomizedDelaySec=6h\n" +
+            "\n" +
+            "[Install]\n" +
+            "WantedBy=timers.target\n",
+            await File.ReadAllTextAsync(environment.UpdateTimerPath));
+        Assert.AreEqual(
+            "--user daemon-reload\n" +
+            "--user enable --now egress-geo-update.timer\n",
+            await File.ReadAllTextAsync(environment.SystemctlLogPath));
+    }
+
+    [TestMethod]
+    public async Task Install_deploys_the_update_wrapper_with_private_paths()
+    {
+        using var environment = new InstallationTestEnvironment();
+
+        var result = await environment.RunScript("install.sh");
+
+        Assert.AreEqual(0, result.ExitCode, result.Error);
+        Assert.IsTrue(File.Exists(environment.ApplicationPath("update.sh")));
+        Assert.IsTrue(
+            File.GetUnixFileMode(environment.ApplicationPath("update.sh"))
+                .HasFlag(UnixFileMode.UserExecute));
+        Assert.AreEqual(
+            "[Unit]\n" +
+            "Description=Update the egress-geo GeoLite2 City database\n" +
+            "\n" +
+            "[Service]\n" +
+            "Type=oneshot\n" +
+            $"ExecStart=\"{environment.ApplicationPath("update.sh")}\" " +
+            $"\"{environment.UpdaterPath}\" " +
+            $"\"{environment.CredentialPath}\" " +
+            $"\"{environment.DatabasePath}\" " +
+            $"\"{environment.ApplicationPath("geo")}\"\n",
+            await File.ReadAllTextAsync(environment.UpdateServicePath));
+    }
+
+    [TestMethod]
+    public async Task Installed_update_units_pass_systemd_verification()
+    {
+        using var environment = new InstallationTestEnvironment();
+        Assert.AreEqual(
+            0,
+            (await environment.RunScript("install.sh")).ExitCode);
+
+        var result = await environment.Run(
+            "/usr/bin/systemd-analyze",
+            "verify",
+            environment.UpdateServicePath,
+            environment.UpdateTimerPath);
+
+        Assert.AreEqual(0, result.ExitCode, result.Error);
     }
 
     [TestMethod]
@@ -113,6 +185,46 @@ public sealed class InstallationScriptsTests
     }
 
     [TestMethod]
+    public async Task Installed_doctor_checks_the_real_deployment()
+    {
+        await using var proxy = new RejectingHttpProxy();
+        using var environment = new InstallationTestEnvironment
+        {
+            HttpProxyUrl = proxy.Url,
+            PublishBuiltApplication = true,
+        };
+        Assert.AreEqual(
+            0,
+            (await environment.RunScript("install.sh")).ExitCode);
+
+        var result = await environment.Run(environment.LauncherPath, "doctor");
+
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.IsTrue(
+            result.Output.Contains(
+                "[ok] application: installed and executable\n",
+                StringComparison.Ordinal));
+        Assert.IsTrue(
+            result.Output.Contains(
+                "[fail] database: missing; run: geo setup\n",
+                StringComparison.Ordinal));
+        Assert.IsTrue(
+            result.Output.Contains(
+                "[fail] updater: missing; run: geo setup\n",
+                StringComparison.Ordinal));
+        Assert.IsTrue(
+            result.Output.Contains(
+                "[ok] update timer: installed, enabled, and active\n",
+                StringComparison.Ordinal));
+        Assert.IsTrue(
+            result.Output.Contains(
+                "[fail] IPv4 endpoints: unreachable through ipify and " +
+                "ident.me\n",
+                StringComparison.Ordinal));
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
     public async Task Reinstall_repairs_the_existing_deployment()
     {
         using var environment = new InstallationTestEnvironment();
@@ -134,6 +246,12 @@ public sealed class InstallationScriptsTests
             Directory.GetFileSystemEntries(
                 environment.ApplicationRootPath,
                 ".app.*"));
+        Assert.AreEqual(
+            "--user daemon-reload\n" +
+            "--user enable --now egress-geo-update.timer\n" +
+            "--user daemon-reload\n" +
+            "--user enable --now egress-geo-update.timer\n",
+            await File.ReadAllTextAsync(environment.SystemctlLogPath));
     }
 
     [TestMethod]
@@ -217,6 +335,25 @@ public sealed class InstallationScriptsTests
         Assert.IsTrue(File.Exists(environment.CredentialPath));
         Assert.IsTrue(File.Exists(environment.DatabasePath));
         Assert.IsTrue(File.Exists(environment.CachePath));
+    }
+
+    [TestMethod]
+    public async Task Default_uninstall_disables_the_update_timer()
+    {
+        using var environment = new InstallationTestEnvironment();
+        Assert.AreEqual(
+            0,
+            (await environment.RunScript("install.sh")).ExitCode);
+
+        var result = await environment.RunScript("uninstall.sh");
+
+        Assert.AreEqual(0, result.ExitCode, result.Error);
+        Assert.AreEqual(
+            "--user daemon-reload\n" +
+            "--user enable --now egress-geo-update.timer\n" +
+            "--user disable --now egress-geo-update.timer\n" +
+            "--user daemon-reload\n",
+            await File.ReadAllTextAsync(environment.SystemctlLogPath));
     }
 
     [TestMethod]
@@ -328,6 +465,7 @@ public sealed class InstallationScriptsTests
             "-n",
             Path.Combine(RepositoryRoot, "scripts", "install.sh"),
             Path.Combine(RepositoryRoot, "scripts", "setup.sh"),
+            Path.Combine(RepositoryRoot, "scripts", "update.sh"),
             Path.Combine(RepositoryRoot, "scripts", "uninstall.sh"),
             Path.Combine(RepositoryRoot, "scripts", "paths.sh"));
 
@@ -401,6 +539,21 @@ public sealed class InstallationScriptsTests
             printf 'runtime' > "$output/geo.runtimeconfig.json"
             """;
 
+        private const string FakeSystemctl = """
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            printf '%s\n' "$*" >> "${FAKE_SYSTEMCTL_LOG:?}"
+            case "$*" in
+              '--user is-enabled egress-geo-update.timer')
+                printf '%s\n' enabled
+                ;;
+              '--user is-active egress-geo-update.timer')
+                printf '%s\n' active
+                ;;
+            esac
+            """;
+
         private readonly string rootPath = Path.Combine(
             Path.GetTempPath(),
             $"egress geo install {Guid.NewGuid():N}");
@@ -413,15 +566,12 @@ public sealed class InstallationScriptsTests
                 Path.Combine(ToolsPath, "dotnet"),
                 FakeDotnet,
                 new UTF8Encoding(false));
-            var chmod = Process.Start(
-                "/usr/bin/chmod",
-                ["0755", Path.Combine(ToolsPath, "dotnet")])!;
-            chmod.WaitForExit();
-            if (chmod.ExitCode != 0)
-            {
-                throw new InvalidOperationException(
-                    "Could not make the fake dotnet command executable.");
-            }
+            File.WriteAllText(
+                Path.Combine(ToolsPath, "systemctl"),
+                FakeSystemctl,
+                new UTF8Encoding(false));
+            MakeExecutable(Path.Combine(ToolsPath, "dotnet"));
+            MakeExecutable(Path.Combine(ToolsPath, "systemctl"));
         }
 
         public string HomePath => Path.Combine(rootPath, "test home");
@@ -435,6 +585,9 @@ public sealed class InstallationScriptsTests
         public string ToolsPath => Path.Combine(rootPath, "test tools");
 
         public string DotnetLogPath => Path.Combine(rootPath, "dotnet.log");
+
+        public string SystemctlLogPath =>
+            Path.Combine(rootPath, "systemctl.log");
 
         public bool IncludeLauncherDirectoryOnPath { get; init; } = true;
 
@@ -473,6 +626,12 @@ public sealed class InstallationScriptsTests
             DataHomePath,
             "egress-geo",
             "GeoLite2-City.mmdb");
+
+        public string UpdaterPath => Path.Combine(
+            DataHomePath,
+            "egress-geo",
+            "updater",
+            "geoipupdate");
 
         public string CachePath => Path.Combine(
             CacheHomePath,
@@ -587,6 +746,7 @@ public sealed class InstallationScriptsTests
             startInfo.Environment["XDG_DATA_HOME"] = DataHomePath;
             startInfo.Environment["XDG_CACHE_HOME"] = CacheHomePath;
             startInfo.Environment["FAKE_DOTNET_LOG"] = DotnetLogPath;
+            startInfo.Environment["FAKE_SYSTEMCTL_LOG"] = SystemctlLogPath;
             if (PublishBuiltApplication)
             {
                 startInfo.Environment["FAKE_PUBLISH_SOURCE"] =
@@ -613,6 +773,17 @@ public sealed class InstallationScriptsTests
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, content);
+        }
+
+        private static void MakeExecutable(string path)
+        {
+            var chmod = Process.Start("/usr/bin/chmod", ["0755", path])!;
+            chmod.WaitForExit();
+            if (chmod.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Could not make the fake command executable: {path}");
+            }
         }
     }
 

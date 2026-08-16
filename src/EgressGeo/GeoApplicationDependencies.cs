@@ -6,4 +6,5 @@ public sealed record GeoApplicationDependencies(
     IEgressSnapshotCache Cache,
     TextWriter Output,
     TextWriter Error,
-    TimeProvider TimeProvider);
+    TimeProvider TimeProvider,
+    IInstallationDoctor Doctor);

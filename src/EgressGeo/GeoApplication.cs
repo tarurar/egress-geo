@@ -41,11 +41,19 @@ public sealed class GeoApplication
             GeoCommand.VerifyDatabase => Write(
                 CommandLineOutput.DatabaseVerification(
                     dependencies.Geolocation.IsAvailable)),
+            GeoCommand.Doctor => RunDoctor(cancellationToken),
             GeoCommand.Help => Write(CommandLineOutput.Help()),
             GeoCommand.Version => Write(CommandLineOutput.Version(GetVersion())),
             GeoCommand.Invalid => Write(CommandLineOutput.InvalidArguments()),
             _ => throw new InvalidOperationException("Unknown geo command."),
         };
+
+    private async ValueTask<int> RunDoctor(
+        CancellationToken cancellationToken)
+    {
+        var report = await dependencies.Doctor.Examine(cancellationToken);
+        return await Write(DoctorOutput.Render(report));
+    }
 
     private async ValueTask<int> RunConfiguredLookup(
         LookupOutputFormat outputFormat,

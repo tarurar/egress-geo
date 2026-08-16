@@ -70,9 +70,36 @@ fi
 update_service="$geo_unit_directory/egress-geo-update.service"
 update_timer="$geo_unit_directory/egress-geo-update.timer"
 enabled_timer="$geo_unit_directory/timers.target.wants/egress-geo-update.timer"
+units_installed=false
+systemctl_failed=false
+if [[ -e $update_service || -L $update_service ||
+      -e $update_timer || -L $update_timer ||
+      -e $enabled_timer || -L $enabled_timer ]]; then
+  units_installed=true
+fi
+if $units_installed; then
+  if ! command -v systemctl >/dev/null 2>&1; then
+    printf '%s\n' \
+      'geo uninstall: systemctl was not found; the timer could not be stopped.' \
+      >&2
+    systemctl_failed=true
+  elif ! systemctl --user disable --now egress-geo-update.timer \
+      >/dev/null 2>&1; then
+    printf '%s\n' \
+      'geo uninstall: the user update timer could not be stopped.' >&2
+    systemctl_failed=true
+  fi
+fi
 remove_path file 'update service' "$update_service"
 remove_path file 'update timer' "$update_timer"
 remove_path file 'enabled update timer' "$enabled_timer"
+if $units_installed && command -v systemctl >/dev/null 2>&1; then
+  if ! systemctl --user daemon-reload >/dev/null 2>&1; then
+    printf '%s\n' \
+      'geo uninstall: the user service manager could not be reloaded.' >&2
+    systemctl_failed=true
+  fi
+fi
 remove_path directory 'geo application' "$geo_application_directory"
 
 if $purge; then
@@ -85,4 +112,8 @@ else
     "$geo_configuration_directory"
   printf 'Preserved user data: %s\n' "$geo_application_root"
   printf 'Preserved user cache: %s\n' "$geo_cache_directory"
+fi
+
+if $systemctl_failed; then
+  exit 1
 fi

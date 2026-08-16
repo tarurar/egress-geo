@@ -20,4 +20,19 @@ public sealed class MaxMindGeolocationDatabaseTests
             new GeolocationLookup.Found("London", "GB"),
             result);
     }
+
+    [TestMethod]
+    public void Build_time_comes_from_the_database_metadata()
+    {
+        var fixturePath = Path.Combine(
+            AppContext.BaseDirectory,
+            "Fixtures",
+            "GeoLite2-City-Test.mmdb");
+        using var database = new MaxMindGeolocationDatabase(fixturePath);
+
+        var buildTime = database.BuildTime;
+
+        Assert.IsNotNull(buildTime);
+        Assert.AreEqual(TimeSpan.Zero, buildTime.Value.Offset);
+    }
 }

@@ -26,6 +26,10 @@ public sealed class MaxMindGeolocationDatabase :
 
     public bool IsAvailable => reader is not null;
 
+    public DateTimeOffset? BuildTime => reader is null
+        ? null
+        : reader.Metadata.BuildDate;
+
     public GeolocationLookup Lookup(IPAddress address)
     {
         ArgumentNullException.ThrowIfNull(address);

@@ -80,6 +80,39 @@ checksum check preserves an existing updater, database, and active
 configuration. On a re-run, press Enter at either credential prompt to keep a
 valid saved value; missing updater or database assets are repaired.
 
+Installation also writes `egress-geo-update.service` and
+`egress-geo-update.timer` to the user systemd unit directory and enables the
+timer. The timer runs daily with up to six hours of randomized delay. It is
+persistent, so a missed run is recovered after the machine comes back. Repair
+installation rewrites the units, reloads the user manager, and enables the
+timer again without duplicating it.
+
+The update service downloads into a temporary directory on the same filesystem
+as the active database. It suppresses updater output, verifies the candidate
+with the installed `geo` command, and atomically replaces the active database
+only after verification. Failed and no-change runs preserve the current
+database. Journal output contains only generic start, no-change, success, or
+failure boundaries; credentials, configuration contents, and updater URLs are
+not logged.
+
+Inspect the complete installed system with:
+
+```console
+geo doctor
+```
+
+The doctor checks the application, database readability and build age,
+updater, private credential permissions, installed/enabled/active timer, cache,
+and all configured public-IP endpoints. Endpoint probes share a two-second
+deadline. Missing IPv6 is reported as an informational capability result, not
+as a failed installation. The credential file is inspected only for its file
+type and mode; its contents are never read into diagnostic output.
+
+A database more than 30 days past its embedded build date is reported as
+stale, matching the GeoLite requirement to stop using and destroy old versions
+within 30 days of an update. Healthy diagnostics exit `0`. Actionable failures
+are all reported in one run and produce exit `1`.
+
 Run the idempotent uninstaller from the source checkout with:
 
 ```console
@@ -87,7 +120,8 @@ Run the idempotent uninstaller from the source checkout with:
 ```
 
 Default uninstall removes the launcher, published application, and known
-user-systemd unit files. It preserves configuration and credentials under
+user-systemd unit files after disabling and stopping the update timer. It
+preserves configuration and credentials under
 `$XDG_CONFIG_HOME/egress-geo`, the database and updater data under
 `$XDG_DATA_HOME/egress-geo`, and snapshots under
 `$XDG_CACHE_HOME/egress-geo`, using the corresponding directories below

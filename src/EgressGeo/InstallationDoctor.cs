@@ -1,0 +1,419 @@
+namespace EgressGeo;
+
+public sealed class InstallationDoctor : IInstallationDoctor
+{
+    private static readonly TimeSpan EndpointBudget = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan MaximumDatabaseAge = TimeSpan.FromDays(30);
+    private const UnixFileMode GroupAndOtherPermissions =
+        UnixFileMode.GroupRead |
+        UnixFileMode.GroupWrite |
+        UnixFileMode.GroupExecute |
+        UnixFileMode.OtherRead |
+        UnixFileMode.OtherWrite |
+        UnixFileMode.OtherExecute;
+    private const UnixFileMode PermissionMask =
+        UnixFileMode.UserRead |
+        UnixFileMode.UserWrite |
+        UnixFileMode.UserExecute |
+        GroupAndOtherPermissions;
+
+    private readonly DoctorPaths paths;
+    private readonly IPublicIpClient publicIp;
+    private readonly IGeolocationDatabase geolocation;
+    private readonly IEgressSnapshotCache cache;
+    private readonly IUserTimerStateReader timerState;
+    private readonly TimeProvider timeProvider;
+
+    public InstallationDoctor(
+        DoctorPaths paths,
+        IPublicIpClient publicIp,
+        IGeolocationDatabase geolocation,
+        IEgressSnapshotCache cache,
+        IUserTimerStateReader timerState,
+        TimeProvider timeProvider)
+    {
+        this.paths = paths ?? throw new ArgumentNullException(nameof(paths));
+        this.publicIp = publicIp ??
+            throw new ArgumentNullException(nameof(publicIp));
+        this.geolocation = geolocation ??
+            throw new ArgumentNullException(nameof(geolocation));
+        this.cache = cache ?? throw new ArgumentNullException(nameof(cache));
+        this.timerState = timerState ??
+            throw new ArgumentNullException(nameof(timerState));
+        this.timeProvider = timeProvider ??
+            throw new ArgumentNullException(nameof(timeProvider));
+    }
+
+    public async ValueTask<DoctorReport> Examine(
+        CancellationToken cancellationToken)
+    {
+        var endpointChecks = CheckEndpoints(cancellationToken);
+        var currentTime = timeProvider.GetUtcNow();
+        var checks = new List<DoctorCheck>
+        {
+            CheckExecutable(
+                "application",
+                paths.ApplicationPath,
+                "missing; re-run install.sh"),
+            CheckDatabase(currentTime),
+            CheckExecutable(
+                "updater",
+                paths.UpdaterPath,
+                "missing; run: geo setup"),
+            CheckCredentials(),
+            await CheckTimer(cancellationToken),
+            await CheckCache(currentTime, cancellationToken),
+        };
+        checks.AddRange(await endpointChecks);
+        return new DoctorReport(checks);
+    }
+
+    private static DoctorCheck CheckExecutable(
+        string name,
+        string path,
+        string missingDetail)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return Failed(name, missingDetail);
+            }
+
+            return IsUserExecutable(path)
+                ? Healthy(name, "installed and executable")
+                : Failed(name, "installed but not executable");
+        }
+        catch (Exception exception) when (IsFileInspectionFailure(exception))
+        {
+            return Failed(name, "cannot inspect the installed file");
+        }
+    }
+
+    private DoctorCheck CheckDatabase(DateTimeOffset currentTime)
+    {
+        if (!File.Exists(paths.DatabasePath))
+        {
+            return Failed("database", "missing; run: geo setup");
+        }
+
+        try
+        {
+            if (!geolocation.IsAvailable)
+            {
+                return Failed("database", "present but unreadable");
+            }
+
+            return CheckDatabaseAge(currentTime, geolocation.BuildTime);
+        }
+        catch (Exception exception) when (IsFileInspectionFailure(exception))
+        {
+            return Failed("database", "present but unreadable");
+        }
+    }
+
+    private static DoctorCheck CheckDatabaseAge(
+        DateTimeOffset currentTime,
+        DateTimeOffset? buildTime)
+    {
+        if (buildTime is null)
+        {
+            return Failed("database", "readable but build date is unavailable");
+        }
+
+        var age = currentTime - buildTime.Value;
+        var buildDescription = buildTime.Value.ToString("yyyy-MM-dd 'UTC'");
+        if (age < TimeSpan.Zero)
+        {
+            return Failed(
+                "database",
+                $"build date is in the future ({buildDescription})");
+        }
+
+        var detail = $"{DescribeAge(age)} old (built {buildDescription})";
+        return MaximumDatabaseAge < age
+            ? Failed("database", $"readable but stale; {detail}")
+            : Healthy("database", $"readable; {detail}");
+    }
+
+    private DoctorCheck CheckCredentials()
+    {
+        if (!File.Exists(paths.CredentialPath))
+        {
+            return Failed("credentials", "missing; run: geo setup");
+        }
+
+        try
+        {
+            var attributes = File.GetAttributes(paths.CredentialPath);
+            if (attributes.HasFlag(FileAttributes.ReparsePoint))
+            {
+                return Failed(
+                    "credentials",
+                    "must be a regular private file, not a symbolic link");
+            }
+
+            if (!OperatingSystem.IsLinux())
+            {
+                return Failed(
+                    "credentials",
+                    "permission inspection requires Linux");
+            }
+
+            return CheckCredentialMode(
+                File.GetUnixFileMode(paths.CredentialPath));
+        }
+        catch (Exception exception) when (IsFileInspectionFailure(exception))
+        {
+            return Failed("credentials", "cannot inspect file permissions");
+        }
+    }
+
+    private static DoctorCheck CheckCredentialMode(UnixFileMode mode)
+    {
+        var displayedMode = Convert.ToString((int)(mode & PermissionMask), 8)
+            .PadLeft(4, '0');
+        var privateAndReadable = mode.HasFlag(UnixFileMode.UserRead) &&
+            (mode & GroupAndOtherPermissions) == 0;
+        return privateAndReadable
+            ? Healthy("credentials", $"private permissions ({displayedMode})")
+            : Failed(
+                "credentials",
+                $"unsafe permissions ({displayedMode}); restrict to mode 0600");
+    }
+
+    private async ValueTask<DoctorCheck> CheckTimer(
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(paths.UpdateServicePath) ||
+            !File.Exists(paths.UpdateTimerPath))
+        {
+            return Failed(
+                "update timer",
+                "service or timer unit is missing; re-run install.sh");
+        }
+
+        try
+        {
+            return DescribeTimerState(
+                await timerState.Read(cancellationToken));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return Failed("update timer", "user systemd state is unavailable");
+        }
+    }
+
+    private static DoctorCheck DescribeTimerState(UserTimerState state)
+    {
+        if (!state.IsAvailable)
+        {
+            return Failed("update timer", "user systemd state is unavailable");
+        }
+
+        if (!state.IsEnabled && !state.IsActive)
+        {
+            return Failed(
+                "update timer",
+                "disabled and inactive; re-run install.sh");
+        }
+
+        if (!state.IsEnabled)
+        {
+            return Failed("update timer", "active but disabled; re-run install.sh");
+        }
+
+        return state.IsActive
+            ? Healthy("update timer", "installed, enabled, and active")
+            : Failed("update timer", "enabled but inactive; re-run install.sh");
+    }
+
+    private async ValueTask<DoctorCheck> CheckCache(
+        DateTimeOffset currentTime,
+        CancellationToken cancellationToken)
+    {
+        if (!Path.Exists(paths.CachePath))
+        {
+            return Information("cache", "not created yet");
+        }
+
+        try
+        {
+            var snapshot = await cache.Read(cancellationToken);
+            return snapshot is null
+                ? Failed("cache", "corrupt or invalid; remove the cache file")
+                : CheckCacheAge(currentTime, snapshot.ObservedAt);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return Failed("cache", "cannot read the cache file");
+        }
+    }
+
+    private static DoctorCheck CheckCacheAge(
+        DateTimeOffset currentTime,
+        DateTimeOffset observedAt)
+    {
+        var age = currentTime - observedAt;
+        if (age < TimeSpan.Zero)
+        {
+            return Failed("cache", "snapshot time is in the future");
+        }
+
+        var detail = $"{DescribeAge(age)} old";
+        return CacheDecision.MaximumCacheAge < age
+            ? Information("cache", $"valid but expired; {detail}")
+            : Healthy("cache", $"valid; {detail}");
+    }
+
+    private async ValueTask<IReadOnlyList<DoctorCheck>> CheckEndpoints(
+        CancellationToken cancellationToken)
+    {
+        using var timeout = new CancellationTokenSource(
+            EndpointBudget,
+            timeProvider);
+        using var request = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            timeout.Token);
+        var ipv4Ipify = Probe(
+            publicIp.GetIpifyIPv4,
+            IpFamily.IPv4,
+            PublicIpProvider.Ipify,
+            request.Token,
+            cancellationToken);
+        var ipv4IdentMe = Probe(
+            publicIp.GetIdentMeIPv4,
+            IpFamily.IPv4,
+            PublicIpProvider.IdentMe,
+            request.Token,
+            cancellationToken);
+        var ipv6Ipify = Probe(
+            publicIp.GetIpifyIPv6,
+            IpFamily.IPv6,
+            PublicIpProvider.Ipify,
+            request.Token,
+            cancellationToken);
+        var ipv6IdentMe = Probe(
+            publicIp.GetIdentMeIPv6,
+            IpFamily.IPv6,
+            PublicIpProvider.IdentMe,
+            request.Token,
+            cancellationToken);
+        await Task.WhenAll(
+            ipv4Ipify,
+            ipv4IdentMe,
+            ipv6Ipify,
+            ipv6IdentMe);
+        return
+        [
+            DescribeEndpoints(
+                IpFamily.IPv4,
+                await ipv4Ipify,
+                await ipv4IdentMe),
+            DescribeEndpoints(
+                IpFamily.IPv6,
+                await ipv6Ipify,
+                await ipv6IdentMe),
+        ];
+    }
+
+    private static async Task<bool> Probe(
+        Func<CancellationToken, ValueTask<PublicIpResponse>> get,
+        IpFamily family,
+        PublicIpProvider provider,
+        CancellationToken requestToken,
+        CancellationToken callerCancellationToken)
+    {
+        try
+        {
+            var response = await get(requestToken)
+                .AsTask()
+                .WaitAsync(requestToken);
+            return response is PublicIpResponse.Received received &&
+                DiscoveredPublicIp.Parse(received.Content, family, provider)
+                    is not null;
+        }
+        catch (OperationCanceledException)
+            when (!callerCancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception)
+            when (!callerCancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    private static DoctorCheck DescribeEndpoints(
+        IpFamily family,
+        bool ipifyReachable,
+        bool identMeReachable)
+    {
+        var name = $"{IpFamilyContract.Format(family)} endpoints";
+        if (ipifyReachable && identMeReachable)
+        {
+            return Healthy(name, "ipify and ident.me reachable");
+        }
+
+        if (ipifyReachable || identMeReachable)
+        {
+            var reachable = ipifyReachable ? "ipify" : "ident.me";
+            var unavailable = ipifyReachable ? "ident.me" : "ipify";
+            return Information(
+                name,
+                $"{reachable} reachable; {unavailable} unavailable");
+        }
+
+        return family == IpFamily.IPv6
+            ? Information(
+                name,
+                "unavailable; IPv6 may not be configured")
+            : Failed(name, "unreachable through ipify and ident.me");
+    }
+
+    private static bool IsUserExecutable(string path) =>
+        !OperatingSystem.IsLinux() ||
+        File.GetUnixFileMode(path).HasFlag(UnixFileMode.UserExecute);
+
+    private static bool IsFileInspectionFailure(Exception exception) =>
+        exception is IOException or UnauthorizedAccessException or
+            NotSupportedException;
+
+    private static string DescribeAge(TimeSpan age)
+    {
+        if (age < TimeSpan.FromMinutes(1))
+        {
+            return "less than 1 minute";
+        }
+
+        if (age < TimeSpan.FromHours(1))
+        {
+            return Plural((int)age.TotalMinutes, "minute");
+        }
+
+        return age < TimeSpan.FromDays(1)
+            ? Plural((int)age.TotalHours, "hour")
+            : Plural((int)age.TotalDays, "day");
+    }
+
+    private static string Plural(int value, string unit) =>
+        $"{value} {unit}{(value == 1 ? string.Empty : "s")}";
+
+    private static DoctorCheck Healthy(string name, string detail) =>
+        new(DoctorCheckStatus.Healthy, name, detail);
+
+    private static DoctorCheck Information(string name, string detail) =>
+        new(DoctorCheckStatus.Information, name, detail);
+
+    private static DoctorCheck Failed(string name, string detail) =>
+        new(DoctorCheckStatus.Failed, name, detail);
+}

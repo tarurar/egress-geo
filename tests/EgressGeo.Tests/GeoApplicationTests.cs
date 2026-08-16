@@ -984,6 +984,7 @@ public sealed class GeoApplicationTests
             "Usage:\n" +
             "  geo\n" +
             "  geo --json\n" +
+            "  geo doctor\n" +
             "  geo --help\n" +
             "  geo --version\n" +
             "\n" +
@@ -1118,6 +1119,74 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
+    public async Task Doctor_reports_all_checks_and_returns_nonzero_for_failures()
+    {
+        var doctor = new FakeInstallationDoctor(
+            new DoctorReport(
+            [
+                new DoctorCheck(
+                    DoctorCheckStatus.Healthy,
+                    "application",
+                    "installed"),
+                new DoctorCheck(
+                    DoctorCheckStatus.Failed,
+                    "database",
+                    "missing; run: geo setup"),
+                new DoctorCheck(
+                    DoctorCheckStatus.Information,
+                    "IPv6 endpoints",
+                    "unavailable; IPv6 may not be configured"),
+            ]));
+
+        var result = await RunApplication(
+            ["doctor"],
+            new UnexpectedPublicIpClient(),
+            new UnexpectedGeolocationDatabase(),
+            doctor: doctor);
+
+        Assert.IsTrue(doctor.WasRun);
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(
+            "[ok] application: installed\n" +
+            "[fail] database: missing; run: geo setup\n" +
+            "[info] IPv6 endpoints: unavailable; IPv6 may not be configured\n" +
+            "Result: 1 actionable check failed.\n",
+            result.Output);
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
+    public async Task Doctor_returns_zero_when_required_checks_are_healthy()
+    {
+        var doctor = new FakeInstallationDoctor(
+            new DoctorReport(
+            [
+                new DoctorCheck(
+                    DoctorCheckStatus.Healthy,
+                    "database",
+                    "readable and fresh"),
+                new DoctorCheck(
+                    DoctorCheckStatus.Information,
+                    "IPv6 endpoints",
+                    "unavailable; IPv6 may not be configured"),
+            ]));
+
+        var result = await RunApplication(
+            ["doctor"],
+            new UnexpectedPublicIpClient(),
+            new UnexpectedGeolocationDatabase(),
+            doctor: doctor);
+
+        Assert.AreEqual(0, result.ExitCode);
+        Assert.AreEqual(
+            "[ok] database: readable and fresh\n" +
+            "[info] IPv6 endpoints: unavailable; IPv6 may not be configured\n" +
+            "Result: healthy.\n",
+            result.Output);
+        Assert.AreEqual(string.Empty, result.Error);
+    }
+
+    [TestMethod]
     public async Task Version_prints_the_command_version()
     {
         var result = await RunApplication(
@@ -1196,7 +1265,8 @@ public sealed class GeoApplicationTests
         IGeolocationDatabase geolocation,
         TimeProvider? timeProvider = null,
         IEgressSnapshotCache? cache = null,
-        ISetupWizard? setupWizard = null)
+        ISetupWizard? setupWizard = null,
+        IInstallationDoctor? doctor = null)
     {
         var output = new StringWriter();
         var error = new StringWriter();
@@ -1206,7 +1276,8 @@ public sealed class GeoApplicationTests
             cache ?? new FakeEgressSnapshotCache(),
             output,
             error,
-            timeProvider ?? TimeProvider.System);
+            timeProvider ?? TimeProvider.System,
+            doctor ?? new UnexpectedInstallationDoctor());
         var application = new GeoApplication(
             dependencies,
             setupWizard ?? new UnexpectedSetupWizard());
@@ -1226,7 +1297,8 @@ public sealed class GeoApplicationTests
             new FakeEgressSnapshotCache(),
             TextWriter.Null,
             TextWriter.Null,
-            TimeProvider.System));
+            TimeProvider.System,
+            new UnexpectedInstallationDoctor()));
 
     private static async Task WaitForFile(string path)
     {
@@ -1590,6 +1662,27 @@ public sealed class GeoApplicationTests
         public ValueTask<int> Run(CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "Only the setup command may run the onboarding wizard.");
+    }
+
+    private sealed class FakeInstallationDoctor(DoctorReport report) :
+        IInstallationDoctor
+    {
+        internal bool WasRun { get; private set; }
+
+        public ValueTask<DoctorReport> Examine(
+            CancellationToken cancellationToken)
+        {
+            WasRun = true;
+            return ValueTask.FromResult(report);
+        }
+    }
+
+    private sealed class UnexpectedInstallationDoctor : IInstallationDoctor
+    {
+        public ValueTask<DoctorReport> Examine(
+            CancellationToken cancellationToken) =>
+            throw new AssertFailedException(
+                "Only the doctor command may inspect the installation.");
     }
 
     private sealed class DeployedSetupScript : IDisposable
