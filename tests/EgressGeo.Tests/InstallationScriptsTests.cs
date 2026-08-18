@@ -41,15 +41,16 @@ public sealed class InstallationScriptsTests
     }
 
     [TestMethod]
-    public async Task Install_includes_the_onboarding_wizard_sidecars()
+    public async Task Install_omits_obsolete_credential_and_updater_sidecars()
     {
         using var environment = new InstallationTestEnvironment();
 
         var result = await environment.RunScript("install.sh");
 
         Assert.AreEqual(0, result.ExitCode, result.Error);
-        Assert.IsTrue(File.Exists(environment.ApplicationPath("setup.sh")));
-        Assert.IsTrue(File.Exists(environment.ApplicationPath("paths.sh")));
+        Assert.IsFalse(File.Exists(environment.ApplicationPath("setup.sh")));
+        Assert.IsFalse(File.Exists(environment.ApplicationPath("update.sh")));
+        Assert.IsFalse(File.Exists(environment.ApplicationPath("paths.sh")));
     }
 
     [TestMethod]
@@ -80,29 +81,45 @@ public sealed class InstallationScriptsTests
     }
 
     [TestMethod]
-    public async Task Install_deploys_the_update_wrapper_with_private_paths()
+    public async Task Install_runs_verified_acquisition_for_scheduled_updates()
     {
         using var environment = new InstallationTestEnvironment();
 
         var result = await environment.RunScript("install.sh");
 
         Assert.AreEqual(0, result.ExitCode, result.Error);
-        Assert.IsTrue(File.Exists(environment.ApplicationPath("update.sh")));
-        Assert.IsTrue(
-            File.GetUnixFileMode(environment.ApplicationPath("update.sh"))
-                .HasFlag(UnixFileMode.UserExecute));
         Assert.AreEqual(
             "[Unit]\n" +
             "Description=Update the egress-geo GeoLite2 City database\n" +
             "\n" +
             "[Service]\n" +
             "Type=oneshot\n" +
-            $"ExecStart=\"{environment.ApplicationPath("update.sh")}\" " +
-            $"\"{environment.UpdaterPath}\" " +
-            $"\"{environment.CredentialPath}\" " +
-            $"\"{environment.DatabasePath}\" " +
-            $"\"{environment.ApplicationPath("geo")}\"\n",
+            $"ExecStart=\"{environment.ApplicationPath("geo")}\" " +
+            "setup --scheduled\n",
             await File.ReadAllTextAsync(environment.UpdateServicePath));
+    }
+
+    [TestMethod]
+    public async Task Repair_install_preserves_and_ignores_legacy_MaxMind_files()
+    {
+        using var environment = new InstallationTestEnvironment();
+        environment.CreateLegacyGeoLiteFiles();
+
+        var result = await environment.RunScript("install.sh");
+
+        Assert.AreEqual(0, result.ExitCode, result.Error);
+        Assert.AreEqual(
+            "legacy credential",
+            await File.ReadAllTextAsync(environment.LegacyCredentialPath));
+        Assert.AreEqual(
+            "legacy updater",
+            await File.ReadAllTextAsync(environment.LegacyUpdaterPath));
+        var service = await File.ReadAllTextAsync(
+            environment.UpdateServicePath);
+        Assert.IsFalse(
+            service.Contains("GeoIP.conf", StringComparison.Ordinal));
+        Assert.IsFalse(
+            service.Contains("geoipupdate", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -179,7 +196,7 @@ public sealed class InstallationScriptsTests
         Assert.AreEqual(1, result.ExitCode);
         Assert.AreEqual(string.Empty, result.Output);
         Assert.AreEqual(
-            "GeoLite2 City database is missing or unreadable.\n" +
+            "GeoLite2 City database is missing, unreadable, or stale.\n" +
             "Run: geo setup\n",
             result.Error);
     }
@@ -210,7 +227,12 @@ public sealed class InstallationScriptsTests
                 StringComparison.Ordinal));
         Assert.IsTrue(
             result.Output.Contains(
-                "[fail] updater: missing; run: geo setup\n",
+                "[fail] provenance: missing; run: geo setup\n",
+                StringComparison.Ordinal));
+        Assert.IsTrue(
+            result.Output.Contains(
+                "[fail] GeoLite source: P3TERX release source is " +
+                "unreachable\n",
                 StringComparison.Ordinal));
         Assert.IsTrue(
             result.Output.Contains(
@@ -308,7 +330,9 @@ public sealed class InstallationScriptsTests
         Assert.IsFalse(Directory.Exists(environment.ApplicationDirectoryPath));
         Assert.IsFalse(File.Exists(environment.UpdateServicePath));
         Assert.IsFalse(File.Exists(environment.UpdateTimerPath));
-        Assert.IsTrue(File.Exists(environment.CredentialPath));
+        Assert.IsTrue(File.Exists(environment.ProvenancePath));
+        Assert.IsTrue(File.Exists(environment.LegacyCredentialPath));
+        Assert.IsTrue(File.Exists(environment.LegacyUpdaterPath));
         Assert.IsTrue(File.Exists(environment.DatabasePath));
         Assert.IsTrue(File.Exists(environment.CachePath));
     }
@@ -332,7 +356,9 @@ public sealed class InstallationScriptsTests
             result.Output.Contains(
                 "Already absent geo application:",
                 StringComparison.Ordinal));
-        Assert.IsTrue(File.Exists(environment.CredentialPath));
+        Assert.IsTrue(File.Exists(environment.ProvenancePath));
+        Assert.IsTrue(File.Exists(environment.LegacyCredentialPath));
+        Assert.IsTrue(File.Exists(environment.LegacyUpdaterPath));
         Assert.IsTrue(File.Exists(environment.DatabasePath));
         Assert.IsTrue(File.Exists(environment.CachePath));
     }
@@ -391,15 +417,18 @@ public sealed class InstallationScriptsTests
 
         Assert.AreEqual(1, result.ExitCode);
         Assert.AreEqual(
-            "Purge permanently removes geo credentials, databases, and " +
-            "cache.\n" +
+            "Purge permanently removes the GeoLite database, provenance, " +
+            "cache,\n" +
+            "and any legacy GeoIP.conf or geoipupdate data.\n" +
             "Type PURGE to confirm:\n" +
             "Purge cancelled; nothing was removed.\n",
             result.Output);
         Assert.AreEqual(string.Empty, result.Error);
         Assert.IsTrue(File.Exists(environment.LauncherPath));
         Assert.IsTrue(Directory.Exists(environment.ApplicationDirectoryPath));
-        Assert.IsTrue(File.Exists(environment.CredentialPath));
+        Assert.IsTrue(File.Exists(environment.ProvenancePath));
+        Assert.IsTrue(File.Exists(environment.LegacyCredentialPath));
+        Assert.IsTrue(File.Exists(environment.LegacyUpdaterPath));
         Assert.IsTrue(File.Exists(environment.DatabasePath));
         Assert.IsTrue(File.Exists(environment.CachePath));
     }
@@ -464,8 +493,6 @@ public sealed class InstallationScriptsTests
             "/usr/bin/bash",
             "-n",
             Path.Combine(RepositoryRoot, "scripts", "install.sh"),
-            Path.Combine(RepositoryRoot, "scripts", "setup.sh"),
-            Path.Combine(RepositoryRoot, "scripts", "update.sh"),
             Path.Combine(RepositoryRoot, "scripts", "uninstall.sh"),
             Path.Combine(RepositoryRoot, "scripts", "paths.sh"));
 
@@ -617,7 +644,7 @@ public sealed class InstallationScriptsTests
             CacheHomePath,
             "egress-geo");
 
-        public string CredentialPath => Path.Combine(
+        public string LegacyCredentialPath => Path.Combine(
             ConfigHomePath,
             "egress-geo",
             "GeoIP.conf");
@@ -627,11 +654,16 @@ public sealed class InstallationScriptsTests
             "egress-geo",
             "GeoLite2-City.mmdb");
 
-        public string UpdaterPath => Path.Combine(
+        public string LegacyUpdaterPath => Path.Combine(
             DataHomePath,
             "egress-geo",
             "updater",
             "geoipupdate");
+
+        public string ProvenancePath => Path.Combine(
+            DataHomePath,
+            "egress-geo",
+            "provenance.json");
 
         public string CachePath => Path.Combine(
             CacheHomePath,
@@ -656,11 +688,18 @@ public sealed class InstallationScriptsTests
 
         public void CreateUserDataAndUnits()
         {
-            WriteFile(CredentialPath, "secret");
+            CreateLegacyGeoLiteFiles();
             WriteFile(DatabasePath, "database");
+            WriteFile(ProvenancePath, "provenance");
             WriteFile(CachePath, "cache");
             WriteFile(UpdateServicePath, "service");
             WriteFile(UpdateTimerPath, "timer");
+        }
+
+        public void CreateLegacyGeoLiteFiles()
+        {
+            WriteFile(LegacyCredentialPath, "legacy credential");
+            WriteFile(LegacyUpdaterPath, "legacy updater");
         }
 
         public void WriteLauncher(string content) =>

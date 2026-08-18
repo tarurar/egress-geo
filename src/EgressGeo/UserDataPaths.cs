@@ -10,6 +10,14 @@ public static class UserDataPaths
         return Path.Combine(GetCacheRoot(), "snapshot.json");
     }
 
+    internal static GeoLiteUpdatePaths GetUpdatePaths()
+    {
+        var dataRoot = GetDataRoot();
+        return new GeoLiteUpdatePaths(
+            Path.Combine(dataRoot, "GeoLite2-City.mmdb"),
+            Path.Combine(dataRoot, "provenance.json"));
+    }
+
     public static DoctorPaths GetDoctorPaths()
     {
         var dataRoot = GetDataRoot();
@@ -18,8 +26,7 @@ public static class UserDataPaths
         return new DoctorPaths(
             Path.Combine(dataRoot, "app", "geo"),
             Path.Combine(dataRoot, "GeoLite2-City.mmdb"),
-            Path.Combine(dataRoot, "updater", "geoipupdate"),
-            Path.Combine(configHome, "egress-geo", "GeoIP.conf"),
+            Path.Combine(dataRoot, "provenance.json"),
             Path.Combine(unitRoot, "egress-geo-update.service"),
             Path.Combine(unitRoot, "egress-geo-update.timer"),
             Path.Combine(GetCacheRoot(), "snapshot.json"));

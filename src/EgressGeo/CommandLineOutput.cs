@@ -16,6 +16,9 @@ internal static class CommandLineOutput
         "Setup:\n" +
         "  geo setup\n" +
         "\n" +
+        "Setup downloads GeoLite2 City from P3TERX, a third-party " +
+        "source, and verifies the GitHub Release digest.\n" +
+        "\n" +
         "This product includes GeoLite Data created by MaxMind, available " +
         "from https://www.maxmind.com.\n";
 
@@ -24,14 +27,6 @@ internal static class CommandLineOutput
 
     internal static CommandResult Version(string version) =>
         new(0, $"geo {version}\n", string.Empty);
-
-    internal static CommandResult DatabaseVerification(bool isAvailable) =>
-        isAvailable
-            ? new(0, string.Empty, string.Empty)
-            : new(
-                1,
-                string.Empty,
-                "GeoLite2 City database is missing or unreadable.\n");
 
     internal static CommandResult InvalidArguments() =>
         new(1, string.Empty, "Unknown arguments. Run: geo --help\n");

@@ -21,7 +21,8 @@ esac
 
 if $purge; then
   printf '%s\n' \
-    'Purge permanently removes geo credentials, databases, and cache.'
+    'Purge permanently removes the GeoLite database, provenance, cache,' \
+    'and any legacy GeoIP.conf or geoipupdate data.'
   printf '%s\n' 'Type PURGE to confirm:'
   confirmation=''
   IFS= read -r confirmation || true

@@ -56,11 +56,8 @@ public sealed class UserDataPathsTests
                 Path.Combine(data, "egress-geo", "GeoLite2-City.mmdb"),
                 paths.DatabasePath);
             Assert.AreEqual(
-                Path.Combine(data, "egress-geo", "updater", "geoipupdate"),
-                paths.UpdaterPath);
-            Assert.AreEqual(
-                Path.Combine(config, "egress-geo", "GeoIP.conf"),
-                paths.CredentialPath);
+                Path.Combine(data, "egress-geo", "provenance.json"),
+                paths.ProvenancePath);
             Assert.AreEqual(
                 Path.Combine(
                     config,

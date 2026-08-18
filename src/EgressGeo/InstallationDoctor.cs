@@ -1,13 +1,14 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.Versioning;
 
 namespace EgressGeo;
 
 public sealed class InstallationDoctor : IInstallationDoctor
 {
     private static readonly TimeSpan EndpointBudget = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan SourceBudget = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan TimerBudget = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan MaximumDatabaseAge = TimeSpan.FromDays(30);
     private const UnixFileMode GroupAndOtherPermissions =
         UnixFileMode.GroupRead |
         UnixFileMode.GroupWrite |
@@ -15,16 +16,11 @@ public sealed class InstallationDoctor : IInstallationDoctor
         UnixFileMode.OtherRead |
         UnixFileMode.OtherWrite |
         UnixFileMode.OtherExecute;
-    private const UnixFileMode PermissionMask =
-        UnixFileMode.UserRead |
-        UnixFileMode.UserWrite |
-        UnixFileMode.UserExecute |
-        GroupAndOtherPermissions;
-
     private readonly DoctorPaths paths;
     private readonly IPublicIpClient publicIp;
     private readonly IGeolocationDatabase geolocation;
     private readonly IEgressSnapshotCache cache;
+    private readonly IGeoLiteSourceHealth sourceHealth;
     private readonly IUserTimerStateReader timerState;
     private readonly TimeProvider timeProvider;
 
@@ -33,6 +29,7 @@ public sealed class InstallationDoctor : IInstallationDoctor
         IPublicIpClient publicIp,
         IGeolocationDatabase geolocation,
         IEgressSnapshotCache cache,
+        IGeoLiteSourceHealth sourceHealth,
         IUserTimerStateReader timerState,
         TimeProvider timeProvider)
     {
@@ -42,6 +39,8 @@ public sealed class InstallationDoctor : IInstallationDoctor
         this.geolocation = geolocation ??
             throw new ArgumentNullException(nameof(geolocation));
         this.cache = cache ?? throw new ArgumentNullException(nameof(cache));
+        this.sourceHealth = sourceHealth ??
+            throw new ArgumentNullException(nameof(sourceHealth));
         this.timerState = timerState ??
             throw new ArgumentNullException(nameof(timerState));
         this.timeProvider = timeProvider ??
@@ -52,7 +51,13 @@ public sealed class InstallationDoctor : IInstallationDoctor
         CancellationToken cancellationToken)
     {
         var endpointChecks = CheckEndpoints(cancellationToken);
+        var sourceCheck = CheckSource(cancellationToken);
         var currentTime = timeProvider.GetUtcNow();
+        var provenanceCheck = CheckProvenance(
+            currentTime,
+            cancellationToken);
+        var timerCheck = CheckTimer(cancellationToken);
+        var cacheCheck = CheckCache(currentTime, cancellationToken);
         var checks = new List<DoctorCheck>
         {
             CheckExecutable(
@@ -60,13 +65,10 @@ public sealed class InstallationDoctor : IInstallationDoctor
                 paths.ApplicationPath,
                 "missing; re-run install.sh"),
             CheckDatabase(currentTime),
-            CheckExecutable(
-                "updater",
-                paths.UpdaterPath,
-                "missing; run: geo setup"),
-            CheckCredentials(),
-            await CheckTimer(cancellationToken),
-            await CheckCache(currentTime, cancellationToken),
+            await provenanceCheck,
+            await sourceCheck,
+            await timerCheck,
+            await cacheCheck,
         };
         checks.AddRange(await endpointChecks);
         return new DoctorReport(checks);
@@ -135,55 +137,123 @@ public sealed class InstallationDoctor : IInstallationDoctor
         }
 
         var detail = $"{DescribeAge(age)} old (built {buildDescription})";
-        return MaximumDatabaseAge < age
+        return GeoLiteDatabasePolicy.MaximumAge < age
             ? Failed("database", $"readable but stale; {detail}")
             : Healthy("database", $"readable; {detail}");
     }
 
-    private DoctorCheck CheckCredentials()
+    private async ValueTask<DoctorCheck> CheckProvenance(
+        DateTimeOffset currentTime,
+        CancellationToken cancellationToken)
     {
-        if (!File.Exists(paths.CredentialPath))
+        if (!File.Exists(paths.ProvenancePath))
         {
-            return Failed("credentials", "missing; run: geo setup");
+            return Failed("provenance", "missing; run: geo setup");
         }
 
         try
         {
-            var attributes = File.GetAttributes(paths.CredentialPath);
+            var attributes = File.GetAttributes(paths.ProvenancePath);
             if (attributes.HasFlag(FileAttributes.ReparsePoint))
             {
                 return Failed(
-                    "credentials",
+                    "provenance",
                     "must be a regular private file, not a symbolic link");
             }
 
-            if (!OperatingSystem.IsLinux())
+            if (OperatingSystem.IsLinux() &&
+                !IsPrivateReadableFile(paths.ProvenancePath))
             {
                 return Failed(
-                    "credentials",
-                    "permission inspection requires Linux");
+                    "provenance",
+                    "permissions are not private; run: geo setup");
             }
 
-            return CheckCredentialMode(
-                File.GetUnixFileMode(paths.CredentialPath));
+            var provenance = await GeoLiteProvenanceFile.Read(
+                paths.ProvenancePath,
+                cancellationToken);
+            if (provenance is null)
+            {
+                return Failed(
+                    "provenance",
+                    "malformed; run: geo setup");
+            }
+
+            if (currentTime < provenance.ActivatedAt)
+            {
+                return Failed(
+                    "provenance",
+                    "activation time is in the future; run: geo setup");
+            }
+
+            var digest = await GeoLiteDigest.Compute(
+                paths.DatabasePath,
+                cancellationToken);
+            return string.Equals(
+                    digest,
+                    provenance.Digest,
+                    StringComparison.Ordinal)
+                ? Healthy(
+                    "provenance",
+                    $"P3TERX release {provenance.ReleaseTag}; " +
+                    "digest verified")
+                : Failed(
+                    "provenance",
+                    "digest does not match the database; run: geo setup");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception exception) when (IsFileInspectionFailure(exception))
         {
-            return Failed("credentials", "cannot inspect file permissions");
+            return Failed("provenance", "cannot inspect; run: geo setup");
         }
     }
 
-    private static DoctorCheck CheckCredentialMode(UnixFileMode mode)
+    private async ValueTask<DoctorCheck> CheckSource(
+        CancellationToken cancellationToken)
     {
-        var displayedMode = Convert.ToString((int)(mode & PermissionMask), 8)
-            .PadLeft(4, '0');
-        var privateAndReadable = mode.HasFlag(UnixFileMode.UserRead) &&
-            (mode & GroupAndOtherPermissions) == 0;
-        return privateAndReadable
-            ? Healthy("credentials", $"private permissions ({displayedMode})")
-            : Failed(
-                "credentials",
-                $"unsafe permissions ({displayedMode}); restrict to mode 0600");
+        using var timeout = new CancellationTokenSource(
+            SourceBudget,
+            timeProvider);
+        using var request = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            timeout.Token);
+        try
+        {
+            var status = await sourceHealth
+                .Check(request.Token)
+                .AsTask()
+                .WaitAsync(request.Token);
+            return status switch
+            {
+                GeoLiteSourceStatus.Reachable reachable => Healthy(
+                    "GeoLite source",
+                    $"P3TERX release {reachable.ReleaseTag} is reachable"),
+                GeoLiteSourceStatus.Invalid => Failed(
+                    "GeoLite source",
+                    "P3TERX release metadata is invalid"),
+                GeoLiteSourceStatus.Unavailable => Failed(
+                    "GeoLite source",
+                    "P3TERX release source is unreachable"),
+                _ => throw new UnreachableException(
+                    "Unknown GeoLite source status."),
+            };
+        }
+        catch (OperationCanceledException)
+            when (timeout.IsCancellationRequested &&
+                !cancellationToken.IsCancellationRequested)
+        {
+            return Failed("GeoLite source", "P3TERX source check timed out");
+        }
+        catch (Exception exception)
+            when (exception is HttpRequestException or IOException)
+        {
+            return Failed(
+                "GeoLite source",
+                "P3TERX release source is unreachable");
+        }
     }
 
     private async ValueTask<DoctorCheck> CheckTimer(
@@ -405,6 +475,14 @@ public sealed class InstallationDoctor : IInstallationDoctor
     private static bool IsUserExecutable(string path) =>
         !OperatingSystem.IsLinux() ||
         File.GetUnixFileMode(path).HasFlag(UnixFileMode.UserExecute);
+
+    [SupportedOSPlatform("linux")]
+    private static bool IsPrivateReadableFile(string path)
+    {
+        var mode = File.GetUnixFileMode(path);
+        return mode.HasFlag(UnixFileMode.UserRead) &&
+            (mode & GroupAndOtherPermissions) == 0;
+    }
 
     private static bool IsFileInspectionFailure(Exception exception) =>
         exception is IOException or UnauthorizedAccessException or

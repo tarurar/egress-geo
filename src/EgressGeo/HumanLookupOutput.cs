@@ -127,7 +127,7 @@ internal static class HumanLookupOutput
         new(
             1,
             string.Empty,
-            "GeoLite2 City database is missing or unreadable.\n" +
+            "GeoLite2 City database is missing, unreadable, or stale.\n" +
             "Run: geo setup\n");
 
     private static CommandResult PublicAddressUnavailable(IpFamily family) =>

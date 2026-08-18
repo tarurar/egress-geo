@@ -1,5 +1,6 @@
 using System.Net;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using Microsoft.Extensions.Time.Testing;
 
 namespace EgressGeo.Tests;
@@ -42,12 +43,12 @@ public sealed class InstallationDoctorTests
                     "readable; 2 days old (built 2026-08-15 UTC)"),
                 new DoctorCheck(
                     DoctorCheckStatus.Healthy,
-                    "updater",
-                    "installed and executable"),
+                    "provenance",
+                    "P3TERX release 2026.08.15; digest verified"),
                 new DoctorCheck(
                     DoctorCheckStatus.Healthy,
-                    "credentials",
-                    "private permissions (0600)"),
+                    "GeoLite source",
+                    "P3TERX release 2026.08.15 is reachable"),
                 new DoctorCheck(
                     DoctorCheckStatus.Healthy,
                     "update timer",
@@ -153,19 +154,16 @@ public sealed class InstallationDoctorTests
     }
 
     [TestMethod]
-    public async Task Unsafe_credential_permissions_fail_without_reading_secrets()
+    public async Task Malformed_provenance_fails_with_setup_remediation()
     {
         using var environment = new DoctorTestEnvironment();
         environment.CreateHealthyFiles();
         await File.WriteAllTextAsync(
-            environment.Paths.CredentialPath,
-            "AccountID 123456\nLicenseKey license-secret\n");
+            environment.Paths.ProvenancePath,
+            "{ not provenance }");
         File.SetUnixFileMode(
-            environment.Paths.CredentialPath,
-            UnixFileMode.UserRead |
-            UnixFileMode.UserWrite |
-            UnixFileMode.GroupRead |
-            UnixFileMode.OtherRead);
+            environment.Paths.ProvenancePath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite);
         var doctor = environment.CreateDoctor(
             CurrentTime - TimeSpan.FromDays(2),
             Snapshot(CurrentTime - TimeSpan.FromHours(1)));
@@ -175,33 +173,29 @@ public sealed class InstallationDoctorTests
         Assert.AreEqual(
             new DoctorCheck(
                 DoctorCheckStatus.Failed,
-                "credentials",
-                "unsafe permissions (0644); restrict to mode 0600"),
-            FindCheck(report, "credentials"));
-        var details = string.Join('\n', report.Checks.Select(check => check.Detail));
-        Assert.IsFalse(details.Contains("123456", StringComparison.Ordinal));
-        Assert.IsFalse(
-            details.Contains("license-secret", StringComparison.Ordinal));
+                "provenance",
+                "malformed; run: geo setup"),
+            FindCheck(report, "provenance"));
     }
 
     [TestMethod]
-    public async Task Missing_updater_fails_with_setup_remediation()
+    public async Task Unreachable_P3TERX_source_fails_without_leaking_details()
     {
         using var environment = new DoctorTestEnvironment();
         environment.CreateHealthyFiles();
-        File.Delete(environment.Paths.UpdaterPath);
         var doctor = environment.CreateDoctor(
             CurrentTime - TimeSpan.FromDays(2),
-            Snapshot(CurrentTime - TimeSpan.FromHours(1)));
+            Snapshot(CurrentTime - TimeSpan.FromHours(1)),
+            sourceStatus: new GeoLiteSourceStatus.Unavailable());
 
         var report = await doctor.Examine(CancellationToken.None);
 
         Assert.AreEqual(
             new DoctorCheck(
                 DoctorCheckStatus.Failed,
-                "updater",
-                "missing; run: geo setup"),
-            FindCheck(report, "updater"));
+                "GeoLite source",
+                "P3TERX release source is unreachable"),
+            FindCheck(report, "GeoLite source"));
     }
 
     [TestMethod]
@@ -373,13 +367,7 @@ public sealed class InstallationDoctorTests
                     rootPath,
                     "data",
                     "egress-geo",
-                    "updater",
-                    "geoipupdate"),
-                Path.Combine(
-                    rootPath,
-                    "config",
-                    "egress-geo",
-                    "GeoIP.conf"),
+                    "provenance.json"),
                 Path.Combine(
                     rootPath,
                     "config",
@@ -405,11 +393,25 @@ public sealed class InstallationDoctorTests
         {
             WriteExecutable(Paths.ApplicationPath);
             WriteFile(Paths.DatabasePath, "database");
-            WriteExecutable(Paths.UpdaterPath);
-            WriteFile(Paths.CredentialPath, "private");
-            File.SetUnixFileMode(
-                Paths.CredentialPath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            var digest = "sha256:" + Convert.ToHexStringLower(
+                SHA256.HashData("database"u8));
+            GeoLiteProvenanceFile.Write(
+                    Paths.ProvenancePath,
+                    new GeoLiteProvenance(
+                        "P3TERX/GeoLite.mmdb",
+                        "2026.08.15",
+                        CurrentTime - TimeSpan.FromDays(2),
+                        new Uri(
+                            "https://github.com/P3TERX/GeoLite.mmdb/" +
+                            "releases/download/2026.08.15/" +
+                            "GeoLite2-City.mmdb"),
+                        digest,
+                        CurrentTime - TimeSpan.FromDays(2),
+                        CurrentTime - TimeSpan.FromDays(1)),
+                    CancellationToken.None)
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
             WriteFile(Paths.UpdateServicePath, "service");
             WriteFile(Paths.UpdateTimerPath, "timer");
             WriteFile(Paths.CachePath, "cache");
@@ -423,7 +425,8 @@ public sealed class InstallationDoctorTests
             TimeProvider? timeProvider = null,
             bool databaseAvailable = true,
             IUserTimerStateReader? timerStateReader = null,
-            IEgressSnapshotCache? cache = null) =>
+            IEgressSnapshotCache? cache = null,
+            GeoLiteSourceStatus? sourceStatus = null) =>
             new(
                 Paths,
                 publicIp ?? new ReachablePublicIpClient(),
@@ -431,6 +434,9 @@ public sealed class InstallationDoctorTests
                     databaseBuildTime,
                     databaseAvailable),
                 cache ?? new FakeEgressSnapshotCache(snapshot),
+                new FakeGeoLiteSourceHealth(
+                    sourceStatus ??
+                        new GeoLiteSourceStatus.Reachable("2026.08.15")),
                 timerStateReader ?? new FakeUserTimerStateReader(
                     timerState ?? new UserTimerState.Available(
                         IsEnabled: true,
@@ -560,6 +566,14 @@ public sealed class InstallationDoctorTests
         public ValueTask<UserTimerState> Read(
             CancellationToken cancellationToken) =>
             ValueTask.FromResult(state);
+    }
+
+    private sealed class FakeGeoLiteSourceHealth(GeoLiteSourceStatus status) :
+        IGeoLiteSourceHealth
+    {
+        public ValueTask<GeoLiteSourceStatus> Check(
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(status);
     }
 
     private sealed class NeverUserTimerStateReader : IUserTimerStateReader

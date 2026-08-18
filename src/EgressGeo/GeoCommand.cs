@@ -11,8 +11,8 @@ internal abstract record GeoCommand
         {
             [] => new Lookup(LookupOutputFormat.Human),
             ["--json"] => new Lookup(LookupOutputFormat.Json),
-            ["setup"] => new Setup(),
-            ["setup", "--verify-database"] => new VerifyDatabase(),
+            ["setup"] => new Setup(IsScheduled: false),
+            ["setup", "--scheduled"] => new Setup(IsScheduled: true),
             ["doctor"] => new Doctor(),
             ["--help"] or ["-h"] => new Help(),
             ["--version"] => new Version(),
@@ -22,9 +22,7 @@ internal abstract record GeoCommand
     internal sealed record Lookup(LookupOutputFormat OutputFormat) :
         GeoCommand;
 
-    internal sealed record Setup : GeoCommand;
-
-    internal sealed record VerifyDatabase : GeoCommand;
+    internal sealed record Setup(bool IsScheduled) : GeoCommand;
 
     internal sealed record Doctor : GeoCommand;
 

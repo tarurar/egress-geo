@@ -24,5 +24,7 @@ GeoIP.conf
 # Runtime GeoLite data and application state
 *.mmdb
 !tests/EgressGeo.Tests/Fixtures/GeoLite2-City-Test.mmdb
+provenance.json
+release-response.json
 .cache/
 .data/

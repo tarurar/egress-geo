@@ -25,9 +25,9 @@ jobs:
 
       - name: Validate shell entry points
         run: |
-          bash -n scripts/install.sh scripts/setup.sh scripts/uninstall.sh scripts/paths.sh
+          bash -n scripts/install.sh scripts/uninstall.sh scripts/paths.sh
           if command -v shellcheck >/dev/null 2>&1; then
-            shellcheck -x scripts/install.sh scripts/setup.sh scripts/uninstall.sh
+            shellcheck -x scripts/install.sh scripts/uninstall.sh
           fi
 
       - name: Restore locked dependencies

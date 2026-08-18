@@ -9,24 +9,16 @@ public sealed class GeoApplication
     private static readonly TimeSpan PrimaryProviderBudget =
         TimeSpan.FromSeconds(1);
     private readonly GeoApplicationDependencies dependencies;
-    private readonly ISetupWizard setupWizard;
-
-    public GeoApplication(GeoApplicationDependencies dependencies)
-        : this(
-            dependencies,
-            new BashSetupWizard(dependencies?.Error ??
-                throw new ArgumentNullException(nameof(dependencies))))
-    {
-    }
+    private readonly IGeoLiteDatabaseUpdater updater;
 
     public GeoApplication(
         GeoApplicationDependencies dependencies,
-        ISetupWizard setupWizard)
+        IGeoLiteDatabaseUpdater updater)
     {
         this.dependencies = dependencies ??
             throw new ArgumentNullException(nameof(dependencies));
-        this.setupWizard = setupWizard ??
-            throw new ArgumentNullException(nameof(setupWizard));
+        this.updater = updater ??
+            throw new ArgumentNullException(nameof(updater));
     }
 
     public ValueTask<int> Run(
@@ -37,16 +29,28 @@ public sealed class GeoApplication
             GeoCommand.Lookup lookup => RunConfiguredLookup(
                 lookup.OutputFormat,
                 cancellationToken),
-            GeoCommand.Setup => setupWizard.Run(cancellationToken),
-            GeoCommand.VerifyDatabase => Write(
-                CommandLineOutput.DatabaseVerification(
-                    dependencies.Geolocation.IsAvailable)),
+            GeoCommand.Setup setup => RunSetup(
+                setup.IsScheduled,
+                cancellationToken),
             GeoCommand.Doctor => RunDoctor(cancellationToken),
             GeoCommand.Help => Write(CommandLineOutput.Help()),
             GeoCommand.Version => Write(CommandLineOutput.Version(GetVersion())),
             GeoCommand.Invalid => Write(CommandLineOutput.InvalidArguments()),
             _ => throw new InvalidOperationException("Unknown geo command."),
         };
+
+    private async ValueTask<int> RunSetup(
+        bool isScheduled,
+        CancellationToken cancellationToken)
+    {
+        if (isScheduled)
+        {
+            await dependencies.Output.WriteAsync("geo update: started.\n");
+        }
+
+        var result = await updater.Update(cancellationToken);
+        return await Write(GeoLiteSetupOutput.Render(result, isScheduled));
+    }
 
     private async ValueTask<int> RunDoctor(
         CancellationToken cancellationToken)
@@ -59,7 +63,13 @@ public sealed class GeoApplication
         LookupOutputFormat outputFormat,
         CancellationToken cancellationToken)
     {
-        var geolocationAvailable = dependencies.Geolocation.IsAvailable;
+        var currentTime = dependencies.TimeProvider.GetUtcNow();
+        var geolocationAvailable = IsGeolocationUsable(currentTime);
+        if (!geolocationAvailable)
+        {
+            return await Write(HumanLookupOutput.MissingDatabase());
+        }
+
         using var liveDeadline = new CancellationTokenSource(
             LiveDiscoveryBudget,
             dependencies.TimeProvider);
@@ -228,6 +238,11 @@ public sealed class GeoApplication
             _ => throw new InvalidOperationException(
                 $"Unknown lookup output format: {outputFormat}"),
         };
+
+    private bool IsGeolocationUsable(DateTimeOffset currentTime) =>
+        dependencies.Geolocation.IsAvailable &&
+        (dependencies.Geolocation.BuildTime is not { } buildTime ||
+            GeoLiteDatabasePolicy.IsFresh(buildTime, currentTime));
 
     private static string GetVersion()
     {

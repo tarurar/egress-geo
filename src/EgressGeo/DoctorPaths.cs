@@ -3,8 +3,7 @@ namespace EgressGeo;
 public sealed record DoctorPaths(
     string ApplicationPath,
     string DatabasePath,
-    string UpdaterPath,
-    string CredentialPath,
+    string ProvenancePath,
     string UpdateServicePath,
     string UpdateTimerPath,
     string CachePath);

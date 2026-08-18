@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.Time.Testing;
@@ -861,11 +860,40 @@ public sealed class GeoApplicationTests
             publicIp,
             new UnavailableGeolocationDatabase());
 
-        Assert.IsTrue(publicIp.WasRequested);
+        Assert.IsFalse(publicIp.WasRequested);
         Assert.AreEqual(1, result.ExitCode);
         Assert.AreEqual(string.Empty, result.Output);
         Assert.AreEqual(
-            "GeoLite2 City database is missing or unreadable.\n" +
+            "GeoLite2 City database is missing, unreadable, or stale.\n" +
+            "Run: geo setup\n",
+            result.Error);
+    }
+
+    [TestMethod]
+    public async Task Lookup_rejects_a_stale_database_before_discovery()
+    {
+        var currentTime = new DateTimeOffset(
+            2026,
+            8,
+            18,
+            0,
+            0,
+            0,
+            TimeSpan.Zero);
+        var publicIp = new RecordingUnavailablePublicIpClient();
+
+        var result = await RunApplication(
+            [],
+            publicIp,
+            new StaleGeolocationDatabase(
+                currentTime - TimeSpan.FromDays(31)),
+            new FakeTimeProvider(currentTime));
+
+        Assert.IsFalse(publicIp.WasRequested);
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(string.Empty, result.Output);
+        Assert.AreEqual(
+            "GeoLite2 City database is missing, unreadable, or stale.\n" +
             "Run: geo setup\n",
             result.Error);
     }
@@ -994,6 +1022,9 @@ public sealed class GeoApplicationTests
             "Setup:\n" +
             "  geo setup\n" +
             "\n" +
+            "Setup downloads GeoLite2 City from P3TERX, a third-party " +
+            "source, and verifies the GitHub Release digest.\n" +
+            "\n" +
             "This product includes GeoLite Data created by MaxMind, " +
             "available from https://www.maxmind.com.\n",
             result.Output);
@@ -1001,121 +1032,76 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
-    public async Task Setup_runs_the_onboarding_wizard_without_lookup()
+    public async Task Setup_activates_a_verified_P3TERX_release_without_lookup()
     {
-        var setupWizard = new FakeSetupWizard(exitCode: 0);
+        var provenance = P3terxProvenance();
+        var updater = new FakeGeoLiteDatabaseUpdater(
+            new GeoLiteUpdateResult.Activated(provenance));
 
         var result = await RunApplication(
             ["setup"],
             new UnexpectedPublicIpClient(),
             new UnexpectedGeolocationDatabase(),
-            setupWizard: setupWizard);
+            updater: updater);
 
-        Assert.IsTrue(setupWizard.WasRun);
+        Assert.IsTrue(updater.WasRun);
         Assert.AreEqual(0, result.ExitCode);
-        Assert.AreEqual(string.Empty, result.Output);
+        Assert.AreEqual(
+            "GeoLite2 City activated from P3TERX release 2026.08.17.\n" +
+            "Verified digest: sha256:" + new string('a', 64) + "\n" +
+            "This product includes GeoLite Data created by MaxMind, " +
+            "available from https://www.maxmind.com.\n" +
+            "Run: geo\n",
+            result.Output);
         Assert.AreEqual(string.Empty, result.Error);
     }
 
     [TestMethod]
-    [DoNotParallelize]
-    public async Task Setup_runs_the_wizard_deployed_beside_the_application()
+    public async Task Scheduled_setup_reports_only_a_generic_update_boundary()
     {
-        var markerPath = Path.Combine(
-            Path.GetTempPath(),
-            $"egress-geo-setup-{Guid.NewGuid():N}");
-        try
-        {
-            using var script = new DeployedSetupScript(
-                $"printf invoked > '{markerPath}'\nexit 23\n");
-            var application = CreateDefaultSetupApplication();
-
-            var exitCode = await application.Run(
-                ["setup"],
-                CancellationToken.None);
-
-            Assert.AreEqual(23, exitCode);
-            Assert.AreEqual("invoked", await File.ReadAllTextAsync(markerPath));
-        }
-        finally
-        {
-            File.Delete(markerPath);
-        }
-    }
-
-    [TestMethod]
-    [DoNotParallelize]
-    public async Task Setup_cancellation_terminates_the_wizard_process_tree()
-    {
-        var processIdsPath = Path.Combine(
-            Path.GetTempPath(),
-            $"egress-geo-setup-pids-{Guid.NewGuid():N}");
-        try
-        {
-            using var script = new DeployedSetupScript(
-                "sleep 300 &\n" +
-                "child=$!\n" +
-                $"printf '%s %s' \"$$\" \"$child\" > " +
-                $"'{processIdsPath}'\n" +
-                "wait\n");
-            var application = CreateDefaultSetupApplication();
-            using var cancellation = new CancellationTokenSource();
-            var running = application.Run(
-                ["setup"],
-                cancellation.Token).AsTask();
-            await WaitForFile(processIdsPath);
-
-            await cancellation.CancelAsync();
-
-            try
-            {
-                await running;
-                Assert.Fail("Cancellation should stop geo setup.");
-            }
-            catch (OperationCanceledException)
-            {
-            }
-
-            var processIds = (await File.ReadAllTextAsync(processIdsPath))
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Select(int.Parse);
-            Assert.IsTrue(processIds.All(id => !IsProcessRunning(id)));
-        }
-        finally
-        {
-            File.Delete(processIdsPath);
-        }
-    }
-
-    [TestMethod]
-    public async Task Setup_verifies_the_database_without_public_IP_discovery()
-    {
-        var geolocation = new RecordingAvailableGeolocationDatabase();
+        var provenance = P3terxProvenance();
+        var updater = new FakeGeoLiteDatabaseUpdater(
+            new GeoLiteUpdateResult.Activated(provenance));
 
         var result = await RunApplication(
-            ["setup", "--verify-database"],
+            ["setup", "--scheduled"],
             new UnexpectedPublicIpClient(),
-            geolocation);
+            new UnexpectedGeolocationDatabase(),
+            updater: updater);
 
-        Assert.IsTrue(geolocation.WasChecked);
+        Assert.IsTrue(updater.WasRun);
         Assert.AreEqual(0, result.ExitCode);
-        Assert.AreEqual(string.Empty, result.Output);
+        Assert.AreEqual(
+            "geo update: started.\n" +
+            "geo update: database updated and verified.\n",
+            result.Output);
         Assert.AreEqual(string.Empty, result.Error);
+        Assert.IsFalse(
+            result.Output.Contains(
+                provenance.ReleaseTag,
+                StringComparison.Ordinal));
     }
 
     [TestMethod]
-    public async Task Setup_reports_an_unreadable_database()
+    public async Task Scheduled_setup_hides_failure_details_from_the_journal()
     {
+        const string safeDetail = "release metadata is not valid JSON";
+        var updater = new FakeGeoLiteDatabaseUpdater(
+            new GeoLiteUpdateResult.Failed(safeDetail));
+
         var result = await RunApplication(
-            ["setup", "--verify-database"],
+            ["setup", "--scheduled"],
             new UnexpectedPublicIpClient(),
-            new UnavailableGeolocationDatabase());
+            new UnexpectedGeolocationDatabase(),
+            updater: updater);
 
         Assert.AreEqual(1, result.ExitCode);
-        Assert.AreEqual(string.Empty, result.Output);
+        Assert.AreEqual("geo update: started.\n", result.Output);
         Assert.AreEqual(
-            "GeoLite2 City database is missing or unreadable.\n",
+            "geo update: failed; previous database preserved.\n",
             result.Error);
+        Assert.IsFalse(
+            result.Error.Contains(safeDetail, StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -1244,6 +1230,18 @@ public sealed class GeoApplicationTests
                 "The test cache snapshot must be valid and complete.");
     }
 
+    private static GeoLiteProvenance P3terxProvenance() =>
+        new(
+            "P3TERX/GeoLite.mmdb",
+            "2026.08.17",
+            new DateTimeOffset(2026, 8, 17, 1, 2, 3, TimeSpan.Zero),
+            new Uri(
+                "https://github.com/P3TERX/GeoLite.mmdb/releases/download/" +
+                "2026.08.17/GeoLite2-City.mmdb"),
+            "sha256:" + new string('a', 64),
+            new DateTimeOffset(2026, 8, 16, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 8, 18, 0, 0, 0, TimeSpan.Zero));
+
     private static CachedEgressFamily CachedFamily(
         string family,
         string? address = null,
@@ -1265,7 +1263,7 @@ public sealed class GeoApplicationTests
         IGeolocationDatabase geolocation,
         TimeProvider? timeProvider = null,
         IEgressSnapshotCache? cache = null,
-        ISetupWizard? setupWizard = null,
+        IGeoLiteDatabaseUpdater? updater = null,
         IInstallationDoctor? doctor = null)
     {
         var output = new StringWriter();
@@ -1280,7 +1278,7 @@ public sealed class GeoApplicationTests
             doctor ?? new UnexpectedInstallationDoctor());
         var application = new GeoApplication(
             dependencies,
-            setupWizard ?? new UnexpectedSetupWizard());
+            updater ?? new UnexpectedGeoLiteDatabaseUpdater());
 
         var exitCode = await application.Run(arguments, CancellationToken.None);
 
@@ -1288,39 +1286,6 @@ public sealed class GeoApplicationTests
             exitCode,
             output.ToString(),
             error.ToString());
-    }
-
-    private static GeoApplication CreateDefaultSetupApplication() =>
-        new(new GeoApplicationDependencies(
-            new UnexpectedPublicIpClient(),
-            new UnexpectedGeolocationDatabase(),
-            new FakeEgressSnapshotCache(),
-            TextWriter.Null,
-            TextWriter.Null,
-            TimeProvider.System,
-            new UnexpectedInstallationDoctor()));
-
-    private static async Task WaitForFile(string path)
-    {
-        using var timeout = new CancellationTokenSource(
-            TimeSpan.FromSeconds(5));
-        while (!File.Exists(path))
-        {
-            await Task.Delay(TimeSpan.FromMilliseconds(10), timeout.Token);
-        }
-    }
-
-    private static bool IsProcessRunning(int processId)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(processId);
-            return !process.HasExited;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
     }
 
     private static ValueTask<ApplicationResult> RunManamaLookup(
@@ -1646,22 +1611,26 @@ public sealed class GeoApplicationTests
                 "Informational commands must not query GeoLite.");
     }
 
-    private sealed class FakeSetupWizard(int exitCode) : ISetupWizard
+    private sealed class FakeGeoLiteDatabaseUpdater(
+        GeoLiteUpdateResult result) : IGeoLiteDatabaseUpdater
     {
         internal bool WasRun { get; private set; }
 
-        public ValueTask<int> Run(CancellationToken cancellationToken)
+        public ValueTask<GeoLiteUpdateResult> Update(
+            CancellationToken cancellationToken)
         {
             WasRun = true;
-            return ValueTask.FromResult(exitCode);
+            return ValueTask.FromResult(result);
         }
     }
 
-    private sealed class UnexpectedSetupWizard : ISetupWizard
+    private sealed class UnexpectedGeoLiteDatabaseUpdater :
+        IGeoLiteDatabaseUpdater
     {
-        public ValueTask<int> Run(CancellationToken cancellationToken) =>
+        public ValueTask<GeoLiteUpdateResult> Update(
+            CancellationToken cancellationToken) =>
             throw new AssertFailedException(
-                "Only the setup command may run the onboarding wizard.");
+                "Only the setup command may acquire GeoLite.");
     }
 
     private sealed class FakeInstallationDoctor(DoctorReport report) :
@@ -1685,34 +1654,6 @@ public sealed class GeoApplicationTests
                 "Only the doctor command may inspect the installation.");
     }
 
-    private sealed class DeployedSetupScript : IDisposable
-    {
-        private readonly string path = Path.Combine(
-            AppContext.BaseDirectory,
-            "setup.sh");
-        private readonly byte[]? original;
-
-        internal DeployedSetupScript(string content)
-        {
-            original = File.Exists(path)
-                ? File.ReadAllBytes(path)
-                : null;
-            File.WriteAllText(path, content);
-        }
-
-        public void Dispose()
-        {
-            if (original is null)
-            {
-                File.Delete(path);
-            }
-            else
-            {
-                File.WriteAllBytes(path, original);
-            }
-        }
-    }
-
     private sealed class UnavailableGeolocationDatabase : IGeolocationDatabase
     {
         public bool IsAvailable => false;
@@ -1720,6 +1661,18 @@ public sealed class GeoApplicationTests
         public GeolocationLookup Lookup(IPAddress address) =>
             throw new AssertFailedException(
                 "An unavailable database must be reported before lookup.");
+    }
+
+    private sealed class StaleGeolocationDatabase(
+        DateTimeOffset buildTime) : IGeolocationDatabase
+    {
+        public bool IsAvailable => true;
+
+        public DateTimeOffset? BuildTime => buildTime;
+
+        public GeolocationLookup Lookup(IPAddress address) =>
+            throw new AssertFailedException(
+                "A stale database must be rejected before lookup.");
     }
 
     private sealed class AvailableUnexpectedGeolocationDatabase :
@@ -1730,25 +1683,6 @@ public sealed class GeoApplicationTests
         public GeolocationLookup Lookup(IPAddress address) =>
             throw new AssertFailedException(
                 "Address discovery failure must precede GeoLite lookup.");
-    }
-
-    private sealed class RecordingAvailableGeolocationDatabase :
-        IGeolocationDatabase
-    {
-        internal bool WasChecked { get; private set; }
-
-        public bool IsAvailable
-        {
-            get
-            {
-                WasChecked = true;
-                return true;
-            }
-        }
-
-        public GeolocationLookup Lookup(IPAddress address) =>
-            throw new AssertFailedException(
-                "Database verification must not perform an address lookup.");
     }
 
     private sealed class FakeEgressSnapshotCache(

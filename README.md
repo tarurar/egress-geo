@@ -5,7 +5,7 @@ IPv4 and IPv6 egress. It discovers both families concurrently, asks each
 family-specific ipify endpoint first, and uses the corresponding ident.me
 endpoint only after a failed or invalid response. The complete live attempt is
 bounded to approximately two seconds. Addresses are resolved locally with a
-user-provided GeoLite2 City database, so no hosted geolocation service receives
+locally installed GeoLite2 City database, so no hosted geolocation service receives
 them for lookup.
 
 IP geolocation is approximate. The reported city can represent a nearby
@@ -49,10 +49,9 @@ The installer publishes a framework-dependent Linux x86-64 application to
 `$HOME/.local/share/egress-geo/app` when `XDG_DATA_HOME` is unset. It installs
 the launcher at `$HOME/.local/bin/geo`; installation stops before publishing
 unless that directory is already on `PATH`.
-The launcher refers only to the published application and setup wizard, so the
-source checkout is not needed to run the installed command. Re-running the
-installer replaces stale publish sidecars and repairs the launcher without
-duplicating either.
+The launcher refers only to the published application, so the source checkout
+is not needed to run the installed command. Re-running the installer replaces
+stale publish sidecars and repairs the launcher without duplicating either.
 
 Configure GeoLite after installation:
 
@@ -60,25 +59,32 @@ Configure GeoLite after installation:
 geo setup
 ```
 
-The three-stage wizard opens MaxMind's GeoLite-specific signup, account
-information, and license-key pages. It waits for the human to complete account
-and email verification, captures the numeric account ID visibly, and captures
-the license key with hidden terminal input. It never asks for the MaxMind
-account password.
+Setup is non-interactive and credential-free. It opens no browser, requests no
+MaxMind account or license key, creates no `GeoIP.conf`, and installs no
+`geoipupdate`. Instead, it resolves the latest dated release from
+[`P3TERX/GeoLite.mmdb`](https://github.com/P3TERX/GeoLite.mmdb), requires exactly
+one `GeoLite2-City.mmdb` asset, and downloads that asset from its GitHub Release
+URL.
 
-The wizard writes only the required `geoipupdate` settings to
-`$XDG_CONFIG_HOME/egress-geo/GeoIP.conf`, or
-`$HOME/.config/egress-geo/GeoIP.conf` when `XDG_CONFIG_HOME` is unset. The file
-is mode `0600`. Credentials are read from that file by the updater; they are
-not passed as command-line arguments.
+P3TERX is a third-party republisher, not an official MaxMind service. P3TERX
+plus GitHub Releases is the accepted database-distribution boundary for this
+tool. The SHA-256 digest supplied by the GitHub Release API detects corruption
+or mismatch within that boundary; it is not an independent proof that MaxMind
+produced the bytes.
 
-Setup downloads MaxMind's official `geoipupdate` 8.0.0 Linux amd64 archive,
-checks its pinned SHA-256 value before activation, and installs the executable
-under user application data. It then downloads only `GeoLite2-City` and runs
-the installed `geo` command to verify the database. A failed download or
-checksum check preserves an existing updater, database, and active
-configuration. On a re-run, press Enter at either credential prompt to keep a
-valid saved value; missing updater or database assets are repaired.
+Before activation, `geo` verifies the downloaded digest, parses the candidate
+as a GeoLite2 City MMDB, checks its embedded build time, and rejects stale data
+or a rollback. The private candidate is created beside the active database and
+replaced atomically only after every check passes. Any metadata, HTTP, digest,
+parse, or activation failure preserves the previous database. An identical
+release is a successful no-change result.
+
+Private provenance is recorded beside the database at
+`$XDG_DATA_HOME/egress-geo/provenance.json`, or
+`$HOME/.local/share/egress-geo/provenance.json`. It contains the P3TERX
+repository and release tag, publication time, GitHub asset URL and digest,
+database build time, and local activation time. Release response bodies and
+unrelated metadata are never persisted.
 
 Installation also writes `egress-geo-update.service` and
 `egress-geo-update.timer` to the user systemd unit directory and enables the
@@ -87,13 +93,10 @@ persistent, so a missed run is recovered after the machine comes back. Repair
 installation rewrites the units, reloads the user manager, and enables the
 timer again without duplicating it.
 
-The update service downloads into a temporary directory on the same filesystem
-as the active database. It suppresses updater output, verifies the candidate
-with the installed `geo` command, and atomically replaces the active database
-only after verification. Failed and no-change runs preserve the current
-database. Journal output contains only generic start, no-change, success, or
-failure boundaries; credentials, configuration contents, and updater URLs are
-not logged.
+The update service invokes the same verified acquisition path as `geo setup`.
+Failed and no-change runs preserve the current database. Journal output contains
+only generic start, no-change, success, or failure boundaries; Release API
+bodies and asset URLs are not logged.
 
 Inspect the complete installed system with:
 
@@ -101,12 +104,12 @@ Inspect the complete installed system with:
 geo doctor
 ```
 
-The doctor checks the application, database readability and build age,
-updater, private credential permissions, installed/enabled/active timer, cache,
-and all configured public-IP endpoints. Endpoint probes share a two-second
-deadline. Missing IPv6 is reported as an informational capability result, not
-as a failed installation. The credential file is inspected only for its file
-type and mode; its contents are never read into diagnostic output.
+The doctor checks the application, database readability and build age, private
+provenance shape and digest, P3TERX source reachability, the
+installed/enabled/active timer, cache, and all configured public-IP endpoints.
+Network probes are bounded and never include response bodies in output. Missing
+IPv6 is reported as an informational capability result, not as a failed
+installation.
 
 A database more than 30 days past its embedded build date is reported as
 stale, matching the GeoLite requirement to stop using and destroy old versions
@@ -121,13 +124,11 @@ Run the idempotent uninstaller from the source checkout with:
 
 Default uninstall removes the launcher, published application, and known
 user-systemd unit files after disabling and stopping the update timer. It
-preserves configuration and credentials under
-`$XDG_CONFIG_HOME/egress-geo`, the database and updater data under
-`$XDG_DATA_HOME/egress-geo`, and snapshots under
-`$XDG_CACHE_HOME/egress-geo`, using the corresponding directories below
-`$HOME` when an XDG variable is unset. Pass `--purge` to remove those retained
-directories as well; purge proceeds only after `PURGE` is entered exactly.
-Installation, uninstall, and purge require no `sudo` and are safe to repeat.
+preserves the database, provenance, cache, and any legacy `GeoIP.conf` or
+`geoipupdate` files from an older installation. Pass `--purge` to remove all of
+that retained user configuration, data, and cache; purge proceeds only after
+`PURGE` is entered exactly. Installation, uninstall, and purge require no
+`sudo` and are safe to repeat.
 
 When both families resolve to the same city and country, human output shares
 one location line. Different cities receive separate family rows. Different
