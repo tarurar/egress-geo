@@ -210,6 +210,42 @@ public sealed class GeoLiteDatabaseUpdaterTests
     }
 
     [TestMethod]
+    public async Task Identical_legacy_migration_retains_path_during_reader_grace()
+    {
+        using var environment = new UpdateTestEnvironment();
+        var database = await File.ReadAllBytesAsync(FixturePath);
+        Directory.CreateDirectory(
+            Path.GetDirectoryName(environment.Paths.LegacyDatabasePath)!);
+        await File.WriteAllBytesAsync(
+            environment.Paths.LegacyDatabasePath,
+            database);
+        using var fixture = new MaxMindGeolocationDatabase(FixturePath);
+        var buildTime = fixture.BuildTime!.Value;
+        var release = CreateRelease(buildTime, database);
+        var migratedAt = buildTime + TimeSpan.FromDays(1);
+        File.SetLastWriteTimeUtc(
+            environment.Paths.LegacyDatabasePath,
+            (migratedAt - TimeSpan.FromDays(1)).UtcDateTime);
+        var timeProvider = new FakeTimeProvider(migratedAt);
+        var updater = new GeoLiteDatabaseUpdater(
+            environment.Paths,
+            new FakeGeoLiteReleaseSource(release, database),
+            timeProvider);
+
+        await updater.Update(CancellationToken.None);
+
+        Assert.AreEqual(
+            migratedAt.UtcDateTime,
+            File.GetLastWriteTimeUtc(
+                environment.Paths.LegacyDatabasePath));
+        timeProvider.Advance(TimeSpan.FromMinutes(59));
+        await updater.Update(CancellationToken.None);
+        Assert.IsTrue(
+            File.Exists(environment.Paths.LegacyDatabasePath),
+            "A legacy reader gets the same grace as a managed reader.");
+    }
+
+    [TestMethod]
     public async Task No_change_preserves_the_original_activation_time()
     {
         using var environment = new UpdateTestEnvironment();

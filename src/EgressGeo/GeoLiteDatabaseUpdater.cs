@@ -129,11 +129,11 @@ internal sealed class GeoLiteDatabaseUpdater : IGeoLiteDatabaseUpdater
             : await GeoLiteDigest.Compute(
                 active.DatabasePath,
                 cancellationToken);
-        var isNoChange = string.Equals(
+        var hasSameDatabaseDigest = string.Equals(
             provenance.Digest,
             activeDigest,
             StringComparison.Ordinal);
-        if (isNoChange &&
+        if (hasSameDatabaseDigest &&
             active!.Provenance?.Matches(
                 provenance,
                 currentTime) == true)
@@ -142,16 +142,21 @@ internal sealed class GeoLiteDatabaseUpdater : IGeoLiteDatabaseUpdater
             return new GeoLiteUpdateResult.NoChange(active.Provenance);
         }
 
-        if (!isNoChange && active is not null)
+        if (active is not null)
         {
-            installation.RetainForReaders(active, currentTime);
+            var replacesActivePath = !hasSameDatabaseDigest ||
+                active.Provenance is null;
+            if (replacesActivePath)
+            {
+                installation.RetainForReaders(active, currentTime);
+            }
         }
 
         await installation.Activate(
             candidatePath,
             provenance,
             cancellationToken);
-        return isNoChange
+        return hasSameDatabaseDigest
             ? new GeoLiteUpdateResult.NoChange(provenance)
             : new GeoLiteUpdateResult.Activated(provenance);
     }
