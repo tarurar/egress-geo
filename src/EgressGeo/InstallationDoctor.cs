@@ -386,45 +386,45 @@ public sealed class InstallationDoctor : IInstallationDoctor
         using var request = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             timeout.Token);
-        var ipv4Ipify = Probe(
-            publicIp.GetIpifyIPv4,
+        var ipv4DeSec = Probe(
+            publicIp.GetDeSecIPv4,
             IpFamily.IPv4,
-            PublicIpProvider.Ipify,
+            PublicIpProvider.DeSec,
             request.Token,
             cancellationToken);
-        var ipv4IdentMe = Probe(
-            publicIp.GetIdentMeIPv4,
+        var ipv4Joker = Probe(
+            publicIp.GetJokerIPv4,
             IpFamily.IPv4,
-            PublicIpProvider.IdentMe,
+            PublicIpProvider.Joker,
             request.Token,
             cancellationToken);
-        var ipv6Ipify = Probe(
-            publicIp.GetIpifyIPv6,
+        var ipv6DeSec = Probe(
+            publicIp.GetDeSecIPv6,
             IpFamily.IPv6,
-            PublicIpProvider.Ipify,
+            PublicIpProvider.DeSec,
             request.Token,
             cancellationToken);
-        var ipv6IdentMe = Probe(
-            publicIp.GetIdentMeIPv6,
+        var ipv6Joker = Probe(
+            publicIp.GetJokerIPv6,
             IpFamily.IPv6,
-            PublicIpProvider.IdentMe,
+            PublicIpProvider.Joker,
             request.Token,
             cancellationToken);
         await Task.WhenAll(
-            ipv4Ipify,
-            ipv4IdentMe,
-            ipv6Ipify,
-            ipv6IdentMe);
+            ipv4DeSec,
+            ipv4Joker,
+            ipv6DeSec,
+            ipv6Joker);
         return
         [
             DescribeEndpoints(
                 IpFamily.IPv4,
-                await ipv4Ipify,
-                await ipv4IdentMe),
+                await ipv4DeSec,
+                await ipv4Joker),
             DescribeEndpoints(
                 IpFamily.IPv6,
-                await ipv6Ipify,
-                await ipv6IdentMe),
+                await ipv6DeSec,
+                await ipv6Joker),
         ];
     }
 
@@ -441,7 +441,10 @@ public sealed class InstallationDoctor : IInstallationDoctor
                 .AsTask()
                 .WaitAsync(requestToken);
             return response is PublicIpResponse.Received received &&
-                DiscoveredPublicIp.Parse(received.Content, family, provider)
+                DiscoveredPublicIp.Parse(
+                    received.Content,
+                    family,
+                    PublicIpProviderContract.ToDiscoverySource(provider))
                     is not null;
         }
         catch (OperationCanceledException)
@@ -459,19 +462,19 @@ public sealed class InstallationDoctor : IInstallationDoctor
 
     private static DoctorCheck DescribeEndpoints(
         IpFamily family,
-        bool ipifyReachable,
-        bool identMeReachable)
+        bool deSecReachable,
+        bool jokerReachable)
     {
         var name = $"{IpFamilyContract.Format(family)} endpoints";
-        if (ipifyReachable && identMeReachable)
+        if (deSecReachable && jokerReachable)
         {
-            return Healthy(name, "ipify and ident.me reachable");
+            return Healthy(name, "deSEC and Joker reachable");
         }
 
-        if (ipifyReachable || identMeReachable)
+        if (deSecReachable || jokerReachable)
         {
-            var reachable = ipifyReachable ? "ipify" : "ident.me";
-            var unavailable = ipifyReachable ? "ident.me" : "ipify";
+            var reachable = deSecReachable ? "deSEC" : "Joker";
+            var unavailable = deSecReachable ? "Joker" : "deSEC";
             return Information(
                 name,
                 $"{reachable} reachable; {unavailable} unavailable");
@@ -481,7 +484,7 @@ public sealed class InstallationDoctor : IInstallationDoctor
             ? Information(
                 name,
                 "unavailable; IPv6 may not be configured")
-            : Failed(name, "unreachable through ipify and ident.me");
+            : Failed(name, "unreachable through deSEC and Joker");
     }
 
     private static bool IsUserExecutable(string path) =>

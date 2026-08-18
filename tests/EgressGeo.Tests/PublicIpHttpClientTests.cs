@@ -6,32 +6,32 @@ namespace EgressGeo.Tests;
 public sealed class PublicIpHttpClientTests
 {
     [TestMethod]
-    public Task Ipify_request_uses_IPv4_only_endpoint() =>
+    public Task DeSEC_request_uses_IPv4_only_endpoint() =>
         AssertEndpoint(
-            "https://api.ipify.org/",
+            "https://checkipv4.dedyn.io/",
             "203.0.113.7",
-            static (client, token) => client.GetIpifyIPv4(token));
+            static (client, token) => client.GetDeSecIPv4(token));
 
     [TestMethod]
-    public Task Ident_me_request_uses_IPv4_only_endpoint() =>
+    public Task Joker_request_uses_IPv4_only_endpoint() =>
         AssertEndpoint(
-            "https://4.ident.me/",
+            "https://ipv4.svc.joker.com/nic/myip",
             "203.0.113.7",
-            static (client, token) => client.GetIdentMeIPv4(token));
+            static (client, token) => client.GetJokerIPv4(token));
 
     [TestMethod]
-    public Task Ipify_request_uses_IPv6_only_endpoint() =>
+    public Task DeSEC_request_uses_IPv6_only_endpoint() =>
         AssertEndpoint(
-            "https://api6.ipify.org/",
+            "https://checkipv6.dedyn.io/",
             "2001:db8::7",
-            static (client, token) => client.GetIpifyIPv6(token));
+            static (client, token) => client.GetDeSecIPv6(token));
 
     [TestMethod]
-    public Task Ident_me_request_uses_IPv6_only_endpoint() =>
+    public Task Joker_request_uses_IPv6_only_endpoint() =>
         AssertEndpoint(
-            "https://6.ident.me/",
+            "https://ipv6.svc.joker.com/nic/myip",
             "2001:db8::7",
-            static (client, token) => client.GetIdentMeIPv6(token));
+            static (client, token) => client.GetJokerIPv6(token));
 
     private static async Task AssertEndpoint(
         string expectedEndpoint,
@@ -71,7 +71,7 @@ public sealed class PublicIpHttpClientTests
                     })));
         var client = new PublicIpHttpClient(http);
 
-        var result = await client.GetIpifyIPv4(CancellationToken.None);
+        var result = await client.GetDeSecIPv4(CancellationToken.None);
 
         Assert.AreEqual(
             new PublicIpResponse.Received("203.0.113.7"),
@@ -88,7 +88,7 @@ public sealed class PublicIpHttpClientTests
                         HttpStatusCode.ServiceUnavailable))));
         var client = new PublicIpHttpClient(http);
 
-        var result = await client.GetIpifyIPv4(CancellationToken.None);
+        var result = await client.GetDeSecIPv4(CancellationToken.None);
 
         Assert.IsInstanceOfType<PublicIpResponse.Unavailable>(result);
     }
@@ -102,7 +102,7 @@ public sealed class PublicIpHttpClientTests
                     new HttpRequestException("Synthetic failure."))));
         var client = new PublicIpHttpClient(http);
 
-        var result = await client.GetIpifyIPv4(CancellationToken.None);
+        var result = await client.GetDeSecIPv4(CancellationToken.None);
 
         Assert.IsInstanceOfType<PublicIpResponse.Unavailable>(result);
     }
@@ -116,7 +116,7 @@ public sealed class PublicIpHttpClientTests
                     new TaskCanceledException("Synthetic timeout."))));
         var client = new PublicIpHttpClient(http);
 
-        var result = await client.GetIpifyIPv4(CancellationToken.None);
+        var result = await client.GetDeSecIPv4(CancellationToken.None);
 
         Assert.IsInstanceOfType<PublicIpResponse.Unavailable>(result);
     }

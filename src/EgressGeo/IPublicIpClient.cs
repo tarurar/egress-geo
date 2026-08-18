@@ -2,18 +2,18 @@ namespace EgressGeo;
 
 public interface IPublicIpClient
 {
-    ValueTask<PublicIpResponse> GetIpifyIPv4(
+    ValueTask<PublicIpResponse> GetDeSecIPv4(
         CancellationToken cancellationToken);
 
-    ValueTask<PublicIpResponse> GetIdentMeIPv4(
+    ValueTask<PublicIpResponse> GetJokerIPv4(
         CancellationToken cancellationToken);
 
-    ValueTask<PublicIpResponse> GetIpifyIPv6(
+    ValueTask<PublicIpResponse> GetDeSecIPv6(
         CancellationToken cancellationToken) =>
         ValueTask.FromResult<PublicIpResponse>(
             new PublicIpResponse.Unavailable());
 
-    ValueTask<PublicIpResponse> GetIdentMeIPv6(
+    ValueTask<PublicIpResponse> GetJokerIPv6(
         CancellationToken cancellationToken) =>
         ValueTask.FromResult<PublicIpResponse>(
             new PublicIpResponse.Unavailable());

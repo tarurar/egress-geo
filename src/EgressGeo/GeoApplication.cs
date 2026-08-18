@@ -118,7 +118,7 @@ public sealed class GeoApplication
 
         var publicIp = await DiscoverFromProvider(
             family,
-            PublicIpProvider.Ipify,
+            PublicIpProvider.DeSec,
             primaryRequest.Token,
             callerCancellationToken);
         if (publicIp is not null)
@@ -130,7 +130,7 @@ public sealed class GeoApplication
         {
             publicIp = await DiscoverFromProvider(
                 family,
-                PublicIpProvider.IdentMe,
+                PublicIpProvider.Joker,
                 liveDiscoveryToken,
                 callerCancellationToken);
         }
@@ -150,7 +150,10 @@ public sealed class GeoApplication
             GetRequest(family, provider),
             requestToken,
             callerCancellationToken);
-        return Parse(response, family, provider);
+        return Parse(
+            response,
+            family,
+            PublicIpProviderContract.ToDiscoverySource(provider));
     }
 
     private Func<CancellationToken, ValueTask<PublicIpResponse>> GetRequest(
@@ -158,14 +161,14 @@ public sealed class GeoApplication
         PublicIpProvider provider) =>
         (family, provider) switch
         {
-            (IpFamily.IPv4, PublicIpProvider.Ipify) =>
-                dependencies.PublicIp.GetIpifyIPv4,
-            (IpFamily.IPv4, PublicIpProvider.IdentMe) =>
-                dependencies.PublicIp.GetIdentMeIPv4,
-            (IpFamily.IPv6, PublicIpProvider.Ipify) =>
-                dependencies.PublicIp.GetIpifyIPv6,
-            (IpFamily.IPv6, PublicIpProvider.IdentMe) =>
-                dependencies.PublicIp.GetIdentMeIPv6,
+            (IpFamily.IPv4, PublicIpProvider.DeSec) =>
+                dependencies.PublicIp.GetDeSecIPv4,
+            (IpFamily.IPv4, PublicIpProvider.Joker) =>
+                dependencies.PublicIp.GetJokerIPv4,
+            (IpFamily.IPv6, PublicIpProvider.DeSec) =>
+                dependencies.PublicIp.GetDeSecIPv6,
+            (IpFamily.IPv6, PublicIpProvider.Joker) =>
+                dependencies.PublicIp.GetJokerIPv6,
             _ => throw new InvalidOperationException(
                 $"Unknown public IP request: {family}, {provider}"),
         };
@@ -191,9 +194,9 @@ public sealed class GeoApplication
     private static DiscoveredPublicIp? Parse(
         PublicIpResponse response,
         IpFamily family,
-        PublicIpProvider provider) =>
+        PublicIpDiscoverySource source) =>
         response is PublicIpResponse.Received received
-            ? DiscoveredPublicIp.Parse(received.Content, family, provider)
+            ? DiscoveredPublicIp.Parse(received.Content, family, source)
             : null;
 
     private LookupOutcome Locate(

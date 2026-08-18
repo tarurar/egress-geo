@@ -91,7 +91,7 @@ public sealed class GeoApplicationTests
                 "203.0.113.7",
                 "Manama",
                 "BH",
-                "ipify"),
+                "deSEC"),
             cache.WrittenSnapshot.Families[0]);
         Assert.AreEqual(
             CachedFamily(
@@ -99,7 +99,7 @@ public sealed class GeoApplicationTests
                 "2001:db8::7",
                 "London",
                 "GB",
-                "ipify"),
+                "deSEC"),
             cache.WrittenSnapshot.Families[1]);
     }
 
@@ -123,13 +123,13 @@ public sealed class GeoApplicationTests
                     "198.51.100.5",
                     "London",
                     "GB",
-                    "ident.me"),
+                    "Joker"),
                 CachedFamily(
                     "IPv6",
                     "2001:db8::5",
                     "London",
                     "GB",
-                    "ident.me")));
+                    "Joker")));
 
         var result = await RunApplication(
             [],
@@ -269,7 +269,7 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
-    public async Task Lookup_uses_ident_me_when_IPv6_ipify_fails()
+    public async Task Lookup_uses_Joker_when_IPv6_deSEC_fails()
     {
         var address = IPAddress.Parse("2001:db8::7");
         var publicIp = OrderedPublicIpClient.ForIPv6(
@@ -368,14 +368,14 @@ public sealed class GeoApplicationTests
             "203.0.113.7",
             "Manama",
             "BH",
-            "ipify");
+            "deSEC");
         AssertFamily(
             families[1],
             "IPv6",
             "2001:db8::7",
             null,
             "BH",
-            "ident.me");
+            "Joker");
     }
 
     [TestMethod]
@@ -434,11 +434,11 @@ public sealed class GeoApplicationTests
             "203.0.113.7",
             null,
             null,
-            "ipify");
+            "deSEC");
     }
 
     [TestMethod]
-    public async Task Json_lookup_uses_recent_snapshot_when_live_discovery_fails()
+    public async Task Json_lookup_uses_recent_legacy_snapshot_when_live_fails()
     {
         var currentTime = new DateTimeOffset(
             2026,
@@ -524,13 +524,13 @@ public sealed class GeoApplicationTests
                     "203.0.113.7",
                     "Manama",
                     "BH",
-                    "ipify"),
+                    "deSEC"),
                 CachedFamily(
                     "IPv6",
                     "2001:db8::7",
                     "London",
                     "GB",
-                    "ident.me")));
+                    "Joker")));
 
         var result = await RunApplication(
             [],
@@ -575,7 +575,7 @@ public sealed class GeoApplicationTests
                     address.ToString(),
                     "Manama",
                     "BH",
-                    "ident.me")));
+                    "Joker")));
         var publicIp = new FakePublicIpClient(address.ToString());
         var geolocation = new FakeGeolocationDatabase(
             address,
@@ -618,7 +618,7 @@ public sealed class GeoApplicationTests
                     "198.51.100.5",
                     "London",
                     "GB",
-                    "ident.me")));
+                    "Joker")));
         var publicIp = new FakePublicIpClient(liveAddress.ToString());
         var geolocation = new FakeGeolocationDatabase(
             liveAddress,
@@ -669,7 +669,7 @@ public sealed class GeoApplicationTests
                     ipv6Address.ToString(),
                     "London",
                     "GB",
-                    "ident.me")));
+                    "Joker")));
 
         var result = await RunApplication(
             [],
@@ -701,7 +701,7 @@ public sealed class GeoApplicationTests
                     "203.0.113.7",
                     "Manama",
                     "BH",
-                    "ipify")));
+                    "deSEC")));
 
         var result = await RunApplication(
             ["--json"],
@@ -738,7 +738,7 @@ public sealed class GeoApplicationTests
                     "203.0.113.7",
                     "Manama",
                     "BH",
-                    "ipify")));
+                    "deSEC")));
 
         var result = await RunApplication(
             [],
@@ -755,7 +755,7 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
-    public async Task Lookup_accepts_surrounding_whitespace_from_ipify()
+    public async Task Lookup_accepts_surrounding_whitespace_from_deSEC()
     {
         var address = IPAddress.Parse("203.0.113.7");
         var publicIp = new FakePublicIpClient(" \t203.0.113.7\r\n");
@@ -774,7 +774,7 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
-    public async Task Lookup_uses_ident_me_when_ipify_request_fails()
+    public async Task Lookup_uses_Joker_when_deSEC_request_fails()
     {
         var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => UnavailableResponse(),
@@ -786,7 +786,7 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
-    public async Task Lookup_uses_ident_me_when_ipify_times_out()
+    public async Task Lookup_uses_Joker_when_deSEC_times_out()
     {
         var timeProvider = new FakeTimeProvider();
         var publicIp = OrderedPublicIpClient.ForIPv4(
@@ -801,7 +801,7 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
-    public async Task Lookup_rejects_ambiguous_ipify_response_before_fallback()
+    public async Task Lookup_rejects_ambiguous_deSEC_response_before_fallback()
     {
         var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => ReceivedResponse("127.1"),
@@ -947,7 +947,7 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
-    public async Task Lookup_reports_invalid_ident_me_response_unavailable()
+    public async Task Lookup_reports_invalid_Joker_response_unavailable()
     {
         var result = await RunApplication(
             [],
@@ -964,7 +964,7 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
-    public async Task Lookup_uses_ident_me_after_malformed_ipify_response()
+    public async Task Lookup_uses_Joker_after_malformed_deSEC_response()
     {
         var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => ReceivedResponse("not an address"),
@@ -976,7 +976,7 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
-    public async Task Lookup_uses_ident_me_after_IPv6_from_ipify()
+    public async Task Lookup_uses_Joker_after_IPv6_from_deSEC()
     {
         var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => ReceivedResponse("2001:db8::1"),
@@ -988,7 +988,7 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
-    public async Task Lookup_uses_ident_me_after_multiple_ipify_addresses()
+    public async Task Lookup_uses_Joker_after_multiple_deSEC_addresses()
     {
         var publicIp = OrderedPublicIpClient.ForIPv4(
             _ => ReceivedResponse("203.0.113.7\n198.51.100.5"),
@@ -1356,12 +1356,12 @@ public sealed class GeoApplicationTests
 
     private sealed class FakePublicIpClient(string response) : IPublicIpClient
     {
-        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+        public ValueTask<PublicIpResponse> GetDeSecIPv4(
             CancellationToken cancellationToken) =>
             ValueTask.FromResult<PublicIpResponse>(
                 new PublicIpResponse.Received(response));
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+        public ValueTask<PublicIpResponse> GetJokerIPv4(
             CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "Primary success must not contact the fallback provider.");
@@ -1371,20 +1371,20 @@ public sealed class GeoApplicationTests
         string ipv4Response,
         string ipv6Response) : IPublicIpClient
     {
-        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+        public ValueTask<PublicIpResponse> GetDeSecIPv4(
             CancellationToken cancellationToken) =>
             ReceivedResponse(ipv4Response);
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+        public ValueTask<PublicIpResponse> GetJokerIPv4(
             CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "IPv4 primary success must not contact its fallback.");
 
-        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+        public ValueTask<PublicIpResponse> GetDeSecIPv6(
             CancellationToken cancellationToken) =>
             ReceivedResponse(ipv6Response);
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+        public ValueTask<PublicIpResponse> GetJokerIPv6(
             CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "IPv6 primary success must not contact its fallback.");
@@ -1395,49 +1395,49 @@ public sealed class GeoApplicationTests
         private readonly RequestedIpFamily family;
         private readonly Func<
             CancellationToken,
-            ValueTask<PublicIpResponse>> ipify;
+            ValueTask<PublicIpResponse>> deSec;
         private readonly Func<
             CancellationToken,
-            ValueTask<PublicIpResponse>> identMe;
-        private bool ipifyRequested;
+            ValueTask<PublicIpResponse>> joker;
+        private bool deSecRequested;
 
         private OrderedPublicIpClient(
             RequestedIpFamily family,
-            Func<CancellationToken, ValueTask<PublicIpResponse>> ipify,
-            Func<CancellationToken, ValueTask<PublicIpResponse>> identMe)
+            Func<CancellationToken, ValueTask<PublicIpResponse>> deSec,
+            Func<CancellationToken, ValueTask<PublicIpResponse>> joker)
         {
             this.family = family;
-            this.ipify = ipify;
-            this.identMe = identMe;
+            this.deSec = deSec;
+            this.joker = joker;
         }
 
         internal static OrderedPublicIpClient ForIPv4(
-            Func<CancellationToken, ValueTask<PublicIpResponse>> ipify,
-            Func<CancellationToken, ValueTask<PublicIpResponse>> identMe) =>
-            new(RequestedIpFamily.IPv4, ipify, identMe);
+            Func<CancellationToken, ValueTask<PublicIpResponse>> deSec,
+            Func<CancellationToken, ValueTask<PublicIpResponse>> joker) =>
+            new(RequestedIpFamily.IPv4, deSec, joker);
 
         internal static OrderedPublicIpClient ForIPv6(
-            Func<CancellationToken, ValueTask<PublicIpResponse>> ipify,
-            Func<CancellationToken, ValueTask<PublicIpResponse>> identMe) =>
-            new(RequestedIpFamily.IPv6, ipify, identMe);
+            Func<CancellationToken, ValueTask<PublicIpResponse>> deSec,
+            Func<CancellationToken, ValueTask<PublicIpResponse>> joker) =>
+            new(RequestedIpFamily.IPv6, deSec, joker);
 
-        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+        public ValueTask<PublicIpResponse> GetDeSecIPv4(
             CancellationToken cancellationToken) =>
-            GetIpify(RequestedIpFamily.IPv4, cancellationToken);
+            GetDeSec(RequestedIpFamily.IPv4, cancellationToken);
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+        public ValueTask<PublicIpResponse> GetJokerIPv4(
             CancellationToken cancellationToken) =>
-            GetIdentMe(RequestedIpFamily.IPv4, cancellationToken);
+            GetJoker(RequestedIpFamily.IPv4, cancellationToken);
 
-        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+        public ValueTask<PublicIpResponse> GetDeSecIPv6(
             CancellationToken cancellationToken) =>
-            GetIpify(RequestedIpFamily.IPv6, cancellationToken);
+            GetDeSec(RequestedIpFamily.IPv6, cancellationToken);
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+        public ValueTask<PublicIpResponse> GetJokerIPv6(
             CancellationToken cancellationToken) =>
-            GetIdentMe(RequestedIpFamily.IPv6, cancellationToken);
+            GetJoker(RequestedIpFamily.IPv6, cancellationToken);
 
-        private ValueTask<PublicIpResponse> GetIpify(
+        private ValueTask<PublicIpResponse> GetDeSec(
             RequestedIpFamily requestedFamily,
             CancellationToken cancellationToken)
         {
@@ -1446,11 +1446,11 @@ public sealed class GeoApplicationTests
                 return UnavailableResponse();
             }
 
-            ipifyRequested = true;
-            return ipify(cancellationToken);
+            deSecRequested = true;
+            return deSec(cancellationToken);
         }
 
-        private ValueTask<PublicIpResponse> GetIdentMe(
+        private ValueTask<PublicIpResponse> GetJoker(
             RequestedIpFamily requestedFamily,
             CancellationToken cancellationToken)
         {
@@ -1460,9 +1460,9 @@ public sealed class GeoApplicationTests
             }
 
             Assert.IsTrue(
-                ipifyRequested,
-                "ipify must be requested before ident.me.");
-            return identMe(cancellationToken);
+                deSecRequested,
+                "deSEC must be requested before Joker.");
+            return joker(cancellationToken);
         }
     }
 
@@ -1475,19 +1475,19 @@ public sealed class GeoApplicationTests
     private sealed class DelayedFallbackPublicIpClient(
         TimeProvider timeProvider) : IPublicIpClient
     {
-        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+        public ValueTask<PublicIpResponse> GetDeSecIPv4(
             CancellationToken cancellationToken) =>
             UnavailableResponse();
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+        public ValueTask<PublicIpResponse> GetJokerIPv4(
             CancellationToken cancellationToken) =>
             RespondAfterDelay("203.0.113.7", cancellationToken);
 
-        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+        public ValueTask<PublicIpResponse> GetDeSecIPv6(
             CancellationToken cancellationToken) =>
             UnavailableResponse();
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+        public ValueTask<PublicIpResponse> GetJokerIPv6(
             CancellationToken cancellationToken) =>
             RespondAfterDelay("2001:db8::7", cancellationToken);
 
@@ -1505,20 +1505,20 @@ public sealed class GeoApplicationTests
 
     private sealed class MixedProviderPublicIpClient : IPublicIpClient
     {
-        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+        public ValueTask<PublicIpResponse> GetDeSecIPv4(
             CancellationToken cancellationToken) =>
             ReceivedResponse("203.0.113.7");
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+        public ValueTask<PublicIpResponse> GetJokerIPv4(
             CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "IPv4 primary success must not contact its fallback.");
 
-        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+        public ValueTask<PublicIpResponse> GetDeSecIPv6(
             CancellationToken cancellationToken) =>
             UnavailableResponse();
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+        public ValueTask<PublicIpResponse> GetJokerIPv6(
             CancellationToken cancellationToken) =>
             ReceivedResponse("2001:db8::7");
     }
@@ -1558,22 +1558,22 @@ public sealed class GeoApplicationTests
 
     private sealed class UnexpectedPublicIpClient : IPublicIpClient
     {
-        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+        public ValueTask<PublicIpResponse> GetDeSecIPv4(
             CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "This command must not perform an HTTP request.");
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+        public ValueTask<PublicIpResponse> GetJokerIPv4(
             CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "This command must not perform an HTTP request.");
 
-        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+        public ValueTask<PublicIpResponse> GetDeSecIPv6(
             CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "This command must not perform an HTTP request.");
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+        public ValueTask<PublicIpResponse> GetJokerIPv6(
             CancellationToken cancellationToken) =>
             throw new AssertFailedException(
                 "This command must not perform an HTTP request.");
@@ -1583,16 +1583,16 @@ public sealed class GeoApplicationTests
     {
         internal bool WasRequested { get; private set; }
 
-        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+        public ValueTask<PublicIpResponse> GetDeSecIPv4(
             CancellationToken cancellationToken) => Unavailable();
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+        public ValueTask<PublicIpResponse> GetJokerIPv4(
             CancellationToken cancellationToken) => Unavailable();
 
-        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+        public ValueTask<PublicIpResponse> GetDeSecIPv6(
             CancellationToken cancellationToken) => Unavailable();
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+        public ValueTask<PublicIpResponse> GetJokerIPv6(
             CancellationToken cancellationToken) => Unavailable();
 
         private ValueTask<PublicIpResponse> Unavailable()

@@ -17,7 +17,7 @@ public sealed record CachedEgressFamily
         CountryCode = country?.Value;
         DiscoverySource = publicIp is null
             ? null
-            : PublicIpProviderContract.Format(publicIp.Provider);
+            : PublicIpDiscoverySourceContract.Format(publicIp.Source);
     }
 
     public string Family { get; }
@@ -123,8 +123,8 @@ public sealed record CachedEgressFamily
         IpFamily family,
         string address,
         string? discoverySource) =>
-        PublicIpProviderContract.Parse(discoverySource) is { } provider
-            ? DiscoveredPublicIp.Parse(address, family, provider)
+        PublicIpDiscoverySourceContract.Parse(discoverySource) is { } source
+            ? DiscoveredPublicIp.Parse(address, family, source)
             : null;
 
     internal static CachedEgressFamily FromOutcome(

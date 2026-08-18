@@ -25,7 +25,7 @@ public sealed class FileEgressSnapshotCacheTests
             "203.0.113.7",
             "Manama",
             "BH",
-            "ipify");
+            "deSEC");
 
         await cache.Write(snapshot, CancellationToken.None);
         var restored = await cache.Read(CancellationToken.None);
@@ -55,7 +55,7 @@ public sealed class FileEgressSnapshotCacheTests
             "203.0.113.7",
             "Manama",
             "BH",
-            "ipify");
+            "deSEC");
 
         await cache.Write(snapshot, CancellationToken.None);
 
@@ -90,13 +90,13 @@ public sealed class FileEgressSnapshotCacheTests
             "203.0.113.7",
             "Manama",
             "BH",
-            "ipify");
+            "deSEC");
         var replacement = Snapshot(
             previous.ObservedAt + TimeSpan.FromHours(1),
             "198.51.100.5",
             "London",
             "GB",
-            "ident.me");
+            "Joker");
         await cache.Write(previous, CancellationToken.None);
         await using var previousFile = new FileStream(
             cachePath,
@@ -129,6 +129,78 @@ public sealed class FileEgressSnapshotCacheTests
         var snapshot = await cache.Read(CancellationToken.None);
 
         Assert.IsNull(snapshot);
+    }
+
+    [TestMethod]
+    public async Task Read_accepts_legacy_provider_sources()
+    {
+        using var directory = new TemporaryDirectory();
+        var cachePath = Path.Combine(directory.Path, "snapshot.json");
+        await File.WriteAllTextAsync(
+            cachePath,
+            """
+            {
+              "observedAt": "2026-08-16T12:34:56+00:00",
+              "families": [
+                {
+                  "family": "IPv4",
+                  "address": "203.0.113.7",
+                  "approximateCity": "Manama",
+                  "countryCode": "BH",
+                  "discoverySource": "ipify"
+                },
+                {
+                  "family": "IPv6",
+                  "address": "2001:db8::7",
+                  "approximateCity": "Manama",
+                  "countryCode": "BH",
+                  "discoverySource": "ident.me"
+                }
+              ]
+            }
+            """);
+        var cache = new FileEgressSnapshotCache(cachePath);
+
+        var snapshot = await cache.Read(CancellationToken.None);
+
+        Assert.IsNotNull(snapshot);
+        Assert.AreEqual("ipify", snapshot.Families[0].DiscoverySource);
+        Assert.AreEqual("ident.me", snapshot.Families[1].DiscoverySource);
+    }
+
+    [TestMethod]
+    public async Task Write_serializes_current_provider_sources()
+    {
+        using var directory = new TemporaryDirectory();
+        var cachePath = Path.Combine(directory.Path, "snapshot.json");
+        var cache = new FileEgressSnapshotCache(cachePath);
+        var snapshot = Snapshot(
+            new DateTimeOffset(
+                2026,
+                8,
+                16,
+                12,
+                34,
+                56,
+                TimeSpan.Zero),
+            "203.0.113.7",
+            "Manama",
+            "BH",
+            "deSEC",
+            "Joker");
+
+        await cache.Write(snapshot, CancellationToken.None);
+
+        using var document = JsonDocument.Parse(
+            await File.ReadAllTextAsync(cachePath));
+        var sources = document.RootElement
+            .GetProperty("families")
+            .EnumerateArray()
+            .Select(family => family
+                .GetProperty("discoverySource")
+                .GetString())
+            .ToArray();
+        CollectionAssert.AreEqual(new[] { "deSEC", "Joker" }, sources);
     }
 
     [TestMethod]
@@ -182,7 +254,7 @@ public sealed class FileEgressSnapshotCacheTests
                   "address": "203.0.113.7",
                   "approximateCity": "Manama",
                   "countryCode": "BH",
-                  "discoverySource": "ipify"
+                  "discoverySource": "deSEC"
                 }
               ]
             }
@@ -199,20 +271,21 @@ public sealed class FileEgressSnapshotCacheTests
         string address,
         string city,
         string country,
-        string source)
+        string ipv4Source,
+        string? ipv6Source = null)
     {
         var ipv4 = CachedEgressFamily.Create(
             "IPv4",
             address,
             city,
             country,
-            source);
+            ipv4Source);
         var ipv6 = CachedEgressFamily.Create(
             "IPv6",
             "2001:db8::7",
             city,
             country,
-            source);
+            ipv6Source ?? ipv4Source);
         return CachedEgressSnapshot.Create(observedAt, [ipv4, ipv6]) ??
             throw new AssertFailedException(
                 "The filesystem test snapshot must be valid and complete.");
@@ -234,14 +307,14 @@ public sealed class FileEgressSnapshotCacheTests
                   "address": "2001:db8::7",
                   "approximateCity": "Manama",
                   "countryCode": "BH",
-                  "discoverySource": "ipify"
+                  "discoverySource": "deSEC"
                 },
                 {
                   "family": "IPv6",
                   "address": "2001:db8::8",
                   "approximateCity": "Manama",
                   "countryCode": "BH",
-                  "discoverySource": "ipify"
+                  "discoverySource": "deSEC"
                 }
               ]
             }

@@ -2,11 +2,11 @@
 
 `geo` reports the approximate city and country of the machine's current public
 IPv4 and IPv6 egress. It discovers both families concurrently, asks each
-family-specific ipify endpoint first, and uses the corresponding ident.me
-endpoint only after a failed or invalid response. The complete live attempt is
-bounded to approximately two seconds. Addresses are resolved locally with a
-locally installed GeoLite2 City database, so no hosted geolocation service receives
-them for lookup.
+family-specific deSEC endpoint first, and uses the corresponding Joker endpoint
+only after a failed, timed-out, or invalid response. The complete live attempt
+is bounded to approximately two seconds. Addresses are resolved locally with a
+locally installed GeoLite2 City database, so no hosted geolocation service
+receives them for lookup.
 
 IP geolocation is approximate. The reported city can represent a nearby
 population center, network registration, or datacenter rather than a physical
@@ -118,9 +118,9 @@ geo doctor
 The doctor checks the application, database readability and build age, private
 provenance shape and digest, P3TERX source reachability, the
 installed/enabled/active timer, cache, and all configured public-IP endpoints.
-Network probes are bounded and never include response bodies in output. Missing
-IPv6 is reported as an informational capability result, not as a failed
-installation.
+The endpoint check probes the family-specific deSEC and Joker endpoints within
+one bounded budget and never includes response bodies in output. Missing IPv6
+is reported as an informational capability result, not as a failed installation.
 
 A database more than 30 days past its embedded build date is reported as
 stale, matching the GeoLite requirement to stop using and destroy old versions
@@ -169,7 +169,7 @@ Use `--json` for the stable machine-readable form:
       "address": "203.0.113.7",
       "approximateCity": "Manama",
       "countryCode": "BH",
-      "discoverySource": "ipify"
+      "discoverySource": "deSEC"
     }
   ]
 }
@@ -179,8 +179,11 @@ Use `--json` for the stable machine-readable form:
 mismatch adds `possible-vpn-leak` to `warnings`. Fully live results set
 `cached` to `false` and `cacheAgeSeconds` to `null`; exact-address location
 reuse and cached-only fallback set `cached` to `true` and report the snapshot
-age. The `families` array contains one entry per discovered or cached address;
-unavailable city or country values are explicit JSON `null` values.
+age. New discoveries record `discoverySource` as `deSEC` for primary success or
+`Joker` for fallback success. Snapshots from older versions with `ipify` or
+`ident.me` remain readable until their normal 24-hour expiry. The `families`
+array contains one entry per discovered or cached address; unavailable city or
+country values are explicit JSON `null` values.
 
 A production GeoLite database and MaxMind credentials must never be added to
 this repository.

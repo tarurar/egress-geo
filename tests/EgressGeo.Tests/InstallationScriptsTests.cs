@@ -240,8 +240,8 @@ public sealed class InstallationScriptsTests
                 StringComparison.Ordinal));
         Assert.IsTrue(
             result.Output.Contains(
-                "[fail] IPv4 endpoints: unreachable through ipify and " +
-                "ident.me\n",
+                "[fail] IPv4 endpoints: unreachable through deSEC and " +
+                "Joker\n",
                 StringComparison.Ordinal));
         Assert.AreEqual(string.Empty, result.Error);
     }

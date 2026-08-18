@@ -60,11 +60,11 @@ public sealed class InstallationDoctorTests
                 new DoctorCheck(
                     DoctorCheckStatus.Healthy,
                     "IPv4 endpoints",
-                    "ipify and ident.me reachable"),
+                    "deSEC and Joker reachable"),
                 new DoctorCheck(
                     DoctorCheckStatus.Healthy,
                     "IPv6 endpoints",
-                    "ipify and ident.me reachable"),
+                    "deSEC and Joker reachable"),
             },
             report.Checks.ToArray());
     }
@@ -285,7 +285,51 @@ public sealed class InstallationDoctorTests
             new DoctorCheck(
                 DoctorCheckStatus.Failed,
                 "IPv4 endpoints",
-                "unreachable through ipify and ident.me"),
+                "unreachable through deSEC and Joker"),
+            FindCheck(report, "IPv4 endpoints"));
+    }
+
+    [TestMethod]
+    public async Task DeSEC_only_IPv4_reachability_names_Joker_unavailable()
+    {
+        using var environment = new DoctorTestEnvironment();
+        environment.CreateHealthyFiles();
+        var doctor = environment.CreateDoctor(
+            CurrentTime - TimeSpan.FromDays(2),
+            Snapshot(CurrentTime - TimeSpan.FromHours(1)),
+            publicIp: new IPv4ProviderResponseClient(
+                new PublicIpResponse.Received("203.0.113.7"),
+                new PublicIpResponse.Unavailable()));
+
+        var report = await doctor.Examine(CancellationToken.None);
+
+        Assert.AreEqual(
+            new DoctorCheck(
+                DoctorCheckStatus.Information,
+                "IPv4 endpoints",
+                "deSEC reachable; Joker unavailable"),
+            FindCheck(report, "IPv4 endpoints"));
+    }
+
+    [TestMethod]
+    public async Task Wrong_family_deSEC_response_names_Joker_reachable()
+    {
+        using var environment = new DoctorTestEnvironment();
+        environment.CreateHealthyFiles();
+        var doctor = environment.CreateDoctor(
+            CurrentTime - TimeSpan.FromDays(2),
+            Snapshot(CurrentTime - TimeSpan.FromHours(1)),
+            publicIp: new IPv4ProviderResponseClient(
+                new PublicIpResponse.Received("2001:db8::7"),
+                new PublicIpResponse.Received("203.0.113.7")));
+
+        var report = await doctor.Examine(CancellationToken.None);
+
+        Assert.AreEqual(
+            new DoctorCheck(
+                DoctorCheckStatus.Information,
+                "IPv4 endpoints",
+                "Joker reachable; deSEC unavailable"),
             FindCheck(report, "IPv4 endpoints"));
     }
 
@@ -362,13 +406,13 @@ public sealed class InstallationDoctorTests
             "203.0.113.7",
             "Manama",
             "BH",
-            "ipify");
+            "deSEC");
         var ipv6 = CachedEgressFamily.Create(
             "IPv6",
             "2001:db8::7",
             "Manama",
             "BH",
-            "ipify");
+            "deSEC");
         return CachedEgressSnapshot.Create(observedAt, [ipv4, ipv6]) ??
             throw new AssertFailedException(
                 "The doctor test snapshot must be valid.");
@@ -527,19 +571,19 @@ public sealed class InstallationDoctorTests
 
     private sealed class ReachablePublicIpClient : IPublicIpClient
     {
-        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+        public ValueTask<PublicIpResponse> GetDeSecIPv4(
             CancellationToken cancellationToken) =>
             Received("203.0.113.7");
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+        public ValueTask<PublicIpResponse> GetJokerIPv4(
             CancellationToken cancellationToken) =>
             Received("198.51.100.5");
 
-        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+        public ValueTask<PublicIpResponse> GetDeSecIPv6(
             CancellationToken cancellationToken) =>
             Received("2001:db8::7");
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+        public ValueTask<PublicIpResponse> GetJokerIPv6(
             CancellationToken cancellationToken) =>
             Received("2001:db8::5");
 
@@ -550,11 +594,11 @@ public sealed class InstallationDoctorTests
 
     private sealed class IPv4OnlyPublicIpClient : IPublicIpClient
     {
-        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+        public ValueTask<PublicIpResponse> GetDeSecIPv4(
             CancellationToken cancellationToken) =>
             Received("203.0.113.7");
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+        public ValueTask<PublicIpResponse> GetJokerIPv4(
             CancellationToken cancellationToken) =>
             Received("198.51.100.5");
 
@@ -563,18 +607,31 @@ public sealed class InstallationDoctorTests
                 new PublicIpResponse.Received(value));
     }
 
+    private sealed class IPv4ProviderResponseClient(
+        PublicIpResponse deSec,
+        PublicIpResponse joker) : IPublicIpClient
+    {
+        public ValueTask<PublicIpResponse> GetDeSecIPv4(
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(deSec);
+
+        public ValueTask<PublicIpResponse> GetJokerIPv4(
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(joker);
+    }
+
     private sealed class NeverPublicIpClient : IPublicIpClient
     {
-        public ValueTask<PublicIpResponse> GetIpifyIPv4(
+        public ValueTask<PublicIpResponse> GetDeSecIPv4(
             CancellationToken cancellationToken) => Never();
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv4(
+        public ValueTask<PublicIpResponse> GetJokerIPv4(
             CancellationToken cancellationToken) => Never();
 
-        public ValueTask<PublicIpResponse> GetIpifyIPv6(
+        public ValueTask<PublicIpResponse> GetDeSecIPv6(
             CancellationToken cancellationToken) => Never();
 
-        public ValueTask<PublicIpResponse> GetIdentMeIPv6(
+        public ValueTask<PublicIpResponse> GetJokerIPv6(
             CancellationToken cancellationToken) => Never();
 
         private static ValueTask<PublicIpResponse> Never() =>

@@ -36,14 +36,15 @@ internal static class JsonLookupOutput
                 found.PublicIp.Address.ToString(),
                 found.City,
                 found.Country.Value,
-                PublicIpProviderContract.Format(found.PublicIp.Provider)),
+                PublicIpDiscoverySourceContract.Format(
+                    found.PublicIp.Source)),
             LookupOutcome.LocationUnavailable unavailable => new JsonFamily(
                 unavailable.PublicIp.Family.ToString(),
                 unavailable.PublicIp.Address.ToString(),
                 null,
                 null,
-                PublicIpProviderContract.Format(
-                    unavailable.PublicIp.Provider)),
+                PublicIpDiscoverySourceContract.Format(
+                    unavailable.PublicIp.Source)),
             LookupOutcome.DatabaseUnavailable
             {
                 PublicIp: { } publicIp,
@@ -52,7 +53,7 @@ internal static class JsonLookupOutput
                     publicIp.Address.ToString(),
                     null,
                     null,
-                    PublicIpProviderContract.Format(publicIp.Provider)),
+                    PublicIpDiscoverySourceContract.Format(publicIp.Source)),
             _ => null,
         };
 

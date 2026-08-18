@@ -8,23 +8,23 @@ internal sealed record DiscoveredPublicIp
     private DiscoveredPublicIp(
         IpFamily family,
         IPAddress address,
-        PublicIpProvider provider)
+        PublicIpDiscoverySource source)
     {
         Family = family;
         Address = address;
-        Provider = provider;
+        Source = source;
     }
 
     internal IpFamily Family { get; }
 
     internal IPAddress Address { get; }
 
-    internal PublicIpProvider Provider { get; }
+    internal PublicIpDiscoverySource Source { get; }
 
     internal static DiscoveredPublicIp? Parse(
         string content,
         IpFamily family,
-        PublicIpProvider provider)
+        PublicIpDiscoverySource source)
     {
         var candidate = content.Trim();
         if (!IPAddress.TryParse(candidate, out var address) ||
@@ -38,7 +38,7 @@ internal sealed record DiscoveredPublicIp
             return null;
         }
 
-        return new DiscoveredPublicIp(family, address, provider);
+        return new DiscoveredPublicIp(family, address, source);
     }
 
     private static AddressFamily GetAddressFamily(IpFamily family) =>
