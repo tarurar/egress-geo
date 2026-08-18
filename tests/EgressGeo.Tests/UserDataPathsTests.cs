@@ -28,6 +28,48 @@ public sealed class UserDataPathsTests
     }
 
     [TestMethod]
+    public async Task Database_path_is_selected_by_the_provenance_digest()
+    {
+        var previous = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        var configured = Path.Combine(
+            Path.GetTempPath(),
+            $"egress-geo-xdg-{Guid.NewGuid():N}");
+        var provenance = GeoLiteTestData.Provenance(
+            "2026.08.17",
+            new DateTimeOffset(2026, 8, 17, 1, 0, 0, TimeSpan.Zero),
+            new Uri(
+                "https://github.com/P3TERX/GeoLite.mmdb/releases/download/" +
+                "2026.08.17/GeoLite2-City.mmdb"),
+            "sha256:" + new string('a', 64),
+            new DateTimeOffset(2026, 8, 17, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 8, 18, 0, 0, 0, TimeSpan.Zero));
+        try
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", configured);
+            var dataDirectory = Path.Combine(configured, "egress-geo");
+            Directory.CreateDirectory(dataDirectory);
+            await GeoLiteProvenanceFile.Write(
+                Path.Combine(dataDirectory, "provenance.json"),
+                provenance,
+                CancellationToken.None);
+
+            var path = UserDataPaths.GetDatabasePath();
+
+            Assert.AreEqual(
+                Path.Combine(
+                    dataDirectory,
+                    "databases",
+                    new string('a', 64) + ".mmdb"),
+                path);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", previous);
+            Directory.Delete(configured, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public void Doctor_paths_use_the_configured_XDG_homes()
     {
         var previousData = Environment.GetEnvironmentVariable("XDG_DATA_HOME");

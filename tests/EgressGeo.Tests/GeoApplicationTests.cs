@@ -1048,9 +1048,12 @@ public sealed class GeoApplicationTests
         Assert.AreEqual(0, result.ExitCode);
         Assert.AreEqual(
             "GeoLite2 City activated from P3TERX release 2026.08.17.\n" +
+            "P3TERX is a third-party source, not an official MaxMind " +
+            "service.\n" +
             "Verified digest: sha256:" + new string('a', 64) + "\n" +
             "This product includes GeoLite Data created by MaxMind, " +
             "available from https://www.maxmind.com.\n" +
+            "IP geolocation is approximate.\n" +
             "Run: geo\n",
             result.Output);
         Assert.AreEqual(string.Empty, result.Error);
@@ -1231,8 +1234,7 @@ public sealed class GeoApplicationTests
     }
 
     private static GeoLiteProvenance P3terxProvenance() =>
-        new(
-            "P3TERX/GeoLite.mmdb",
+        GeoLiteTestData.Provenance(
             "2026.08.17",
             new DateTimeOffset(2026, 8, 17, 1, 2, 3, TimeSpan.Zero),
             new Uri(

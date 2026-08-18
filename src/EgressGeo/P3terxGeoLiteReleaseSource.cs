@@ -262,13 +262,15 @@ internal sealed class P3terxGeoLiteReleaseSource :
             return Invalid("City asset URL or digest is malformed");
         }
 
-        return new GeoLiteReleaseResolution.Found(
-            new GeoLiteRelease(
-                GeoLiteReleaseContract.Repository,
-                tag!,
-                publishedAt,
-                assetUrl,
-                digest));
+        var parsedRelease = GeoLiteRelease.Create(
+            GeoLiteReleaseContract.Repository,
+            tag,
+            publishedAt,
+            assetUrl,
+            digest);
+        return parsedRelease is null
+            ? Invalid("release identity is missing or malformed")
+            : new GeoLiteReleaseResolution.Found(parsedRelease);
     }
 
     private static bool? GetBoolean(JsonElement element, string name) =>

@@ -44,8 +44,7 @@ public sealed class P3terxGeoLiteReleaseSourceTests
 
         Assert.AreEqual(
             new GeoLiteReleaseResolution.Found(
-                new GeoLiteRelease(
-                    "P3TERX/GeoLite.mmdb",
+                GeoLiteTestData.Release(
                     "2026.08.17",
                     new DateTimeOffset(
                         2026,
@@ -133,8 +132,7 @@ public sealed class P3terxGeoLiteReleaseSourceTests
     [TestMethod]
     public async Task Download_streams_only_the_selected_release_asset()
     {
-        var release = new GeoLiteRelease(
-            "P3TERX/GeoLite.mmdb",
+        var release = GeoLiteTestData.Release(
             "2026.08.17",
             new DateTimeOffset(2026, 8, 17, 1, 2, 3, TimeSpan.Zero),
             new Uri(
@@ -240,8 +238,7 @@ public sealed class P3terxGeoLiteReleaseSourceTests
         """;
 
     private static GeoLiteRelease Release() =>
-        new(
-            "P3TERX/GeoLite.mmdb",
+        GeoLiteTestData.Release(
             "2026.08.17",
             new DateTimeOffset(2026, 8, 17, 1, 2, 3, TimeSpan.Zero),
             new Uri(

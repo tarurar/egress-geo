@@ -14,8 +14,7 @@ public sealed class GeoLiteProvenanceFileTests
             $"egress-geo-provenance-{Guid.NewGuid():N}");
         var path = Path.Combine(directory, "provenance.json");
         Directory.CreateDirectory(directory);
-        var provenance = new GeoLiteProvenance(
-            "P3TERX/GeoLite.mmdb",
+        var provenance = GeoLiteTestData.Provenance(
             "2026.08.17",
             new DateTimeOffset(2026, 8, 17, 1, 2, 3, TimeSpan.Zero),
             new Uri(
@@ -39,6 +38,42 @@ public sealed class GeoLiteProvenanceFileTests
             Assert.AreEqual(
                 UnixFileMode.UserRead | UnixFileMode.UserWrite,
                 File.GetUnixFileMode(path));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task Semantically_invalid_provenance_is_rejected()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            $"egress-geo-provenance-{Guid.NewGuid():N}");
+        var path = Path.Combine(directory, "provenance.json");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            await File.WriteAllTextAsync(
+                path,
+                """
+                {
+                  "repository": "P3TERX/GeoLite.mmdb",
+                  "releaseTag": "2026.08.17",
+                  "publishedAt": "2026-08-17T01:00:00Z",
+                  "assetUrl": "https://github.com/P3TERX/GeoLite.mmdb/releases/download/2026.08.17/GeoLite2-City.mmdb",
+                  "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "databaseBuildTime": "2026-08-18T00:00:00Z",
+                  "activatedAt": "2026-08-18T01:00:00Z"
+                }
+                """);
+
+            var provenance = await GeoLiteProvenanceFile.Read(
+                path,
+                CancellationToken.None);
+
+            Assert.IsNull(provenance);
         }
         finally
         {

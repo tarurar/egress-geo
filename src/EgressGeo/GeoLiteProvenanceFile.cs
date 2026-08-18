@@ -32,11 +32,12 @@ internal static class GeoLiteProvenanceFile
         await using var stream = new FileStream(path, options);
         await JsonSerializer.SerializeAsync(
             stream,
-            provenance,
+            ProvenanceDocument.From(provenance),
             SerializerOptions,
             cancellationToken);
         await stream.WriteAsync("\n"u8.ToArray(), cancellationToken);
         await stream.FlushAsync(cancellationToken);
+        stream.Flush(flushToDisk: true);
     }
 
     internal static async ValueTask<GeoLiteProvenance?> Read(
@@ -55,14 +56,12 @@ internal static class GeoLiteProvenanceFile
                     Options = FileOptions.Asynchronous |
                         FileOptions.SequentialScan,
                 });
-            var provenance = await JsonSerializer
-                .DeserializeAsync<GeoLiteProvenance>(
+            var document = await JsonSerializer
+                .DeserializeAsync<ProvenanceDocument>(
                     stream,
                     SerializerOptions,
                     cancellationToken);
-            return provenance is not null && IsValid(provenance)
-                ? provenance
-                : null;
+            return document?.ToProvenance();
         }
         catch (OperationCanceledException)
         {
@@ -86,16 +85,55 @@ internal static class GeoLiteProvenanceFile
         }
     }
 
-    private static bool IsValid(GeoLiteProvenance provenance)
+    internal static GeoLiteProvenance? Read(string path)
     {
-        return GeoLiteReleaseContract.IsValidIdentity(
-                provenance.Repository,
-                provenance.ReleaseTag,
-                provenance.AssetUrl,
-                provenance.Digest) &&
-            provenance.DatabaseBuildTime <= provenance.PublishedAt &&
-            provenance.DatabaseBuildTime <= provenance.ActivatedAt &&
-            provenance.PublishedAt <= provenance.ActivatedAt;
+        try
+        {
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read);
+            return JsonSerializer.Deserialize<ProvenanceDocument>(
+                stream,
+                SerializerOptions)?.ToProvenance();
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or
+                JsonException)
+        {
+            return null;
+        }
     }
 
+    private sealed record ProvenanceDocument(
+        string? Repository,
+        string? ReleaseTag,
+        DateTimeOffset PublishedAt,
+        Uri? AssetUrl,
+        string? Digest,
+        DateTimeOffset DatabaseBuildTime,
+        DateTimeOffset ActivatedAt)
+    {
+        internal static ProvenanceDocument From(
+            GeoLiteProvenance provenance) =>
+            new(
+                provenance.Repository,
+                provenance.ReleaseTag,
+                provenance.PublishedAt,
+                provenance.AssetUrl,
+                provenance.Digest,
+                provenance.DatabaseBuildTime,
+                provenance.ActivatedAt);
+
+        internal GeoLiteProvenance? ToProvenance() =>
+            GeoLiteProvenance.Parse(
+                Repository,
+                ReleaseTag,
+                PublishedAt,
+                AssetUrl,
+                Digest,
+                DatabaseBuildTime,
+                ActivatedAt);
+    }
 }

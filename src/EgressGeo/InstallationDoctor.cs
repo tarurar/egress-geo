@@ -138,7 +138,9 @@ public sealed class InstallationDoctor : IInstallationDoctor
 
         var detail = $"{DescribeAge(age)} old (built {buildDescription})";
         return GeoLiteDatabasePolicy.MaximumAge < age
-            ? Failed("database", $"readable but stale; {detail}")
+            ? Failed(
+                "database",
+                $"readable but stale; {detail}; run: geo setup")
             : Healthy("database", $"readable; {detail}");
     }
 

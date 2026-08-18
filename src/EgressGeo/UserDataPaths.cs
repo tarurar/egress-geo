@@ -2,8 +2,11 @@ namespace EgressGeo;
 
 public static class UserDataPaths
 {
-    public static string GetDatabasePath() =>
-        Path.Combine(GetDataRoot(), "GeoLite2-City.mmdb");
+    public static string GetDatabasePath()
+    {
+        var paths = GetUpdatePaths();
+        return new GeoLiteInstallationStore(paths).ResolveDatabasePath();
+    }
 
     public static string GetCachePath()
     {
@@ -13,19 +16,22 @@ public static class UserDataPaths
     internal static GeoLiteUpdatePaths GetUpdatePaths()
     {
         var dataRoot = GetDataRoot();
-        return new GeoLiteUpdatePaths(
-            Path.Combine(dataRoot, "GeoLite2-City.mmdb"),
-            Path.Combine(dataRoot, "provenance.json"));
+        return new GeoLiteUpdatePaths(dataRoot);
     }
 
     public static DoctorPaths GetDoctorPaths()
+    {
+        return GetDoctorPaths(GetDatabasePath());
+    }
+
+    internal static DoctorPaths GetDoctorPaths(string databasePath)
     {
         var dataRoot = GetDataRoot();
         var configHome = GetHome("XDG_CONFIG_HOME", ".config");
         var unitRoot = Path.Combine(configHome, "systemd", "user");
         return new DoctorPaths(
             Path.Combine(dataRoot, "app", "geo"),
-            Path.Combine(dataRoot, "GeoLite2-City.mmdb"),
+            databasePath,
             Path.Combine(dataRoot, "provenance.json"),
             Path.Combine(unitRoot, "egress-geo-update.service"),
             Path.Combine(unitRoot, "egress-geo-update.timer"),

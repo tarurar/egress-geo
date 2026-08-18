@@ -53,9 +53,12 @@ internal static class GeoLiteSetupOutput
             0,
             $"GeoLite2 City {action} P3TERX release " +
             $"{provenance.ReleaseTag}.\n" +
+            "P3TERX is a third-party source, not an official MaxMind " +
+            "service.\n" +
             $"Verified digest: {provenance.Digest}\n" +
             "This product includes GeoLite Data created by MaxMind, " +
             "available from https://www.maxmind.com.\n" +
+            "IP geolocation is approximate.\n" +
             "Run: geo\n",
             string.Empty);
 }

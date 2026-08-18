@@ -14,11 +14,17 @@ location.
 
 ## Current lookup
 
-The application targets .NET 10 on Linux x86-64. It expects the licensed
-database at:
+The application targets .NET 10 on Linux x86-64. Verified databases are kept
+under:
 
-- `$XDG_DATA_HOME/egress-geo/GeoLite2-City.mmdb`, when `XDG_DATA_HOME` is set;
-- `$HOME/.local/share/egress-geo/GeoLite2-City.mmdb` otherwise.
+- `$XDG_DATA_HOME/egress-geo/databases`, when `XDG_DATA_HOME` is set;
+- `$HOME/.local/share/egress-geo/databases` otherwise.
+
+Each database is named by its SHA-256 digest. The private provenance file
+selects the active digest, so the database and the metadata describing it
+change as one atomic installation state. A legacy `GeoLite2-City.mmdb` beside
+that directory remains readable until the first successful `geo setup`
+migrates it.
 
 The last successful egress snapshot is kept at:
 
@@ -74,10 +80,15 @@ produced the bytes.
 
 Before activation, `geo` verifies the downloaded digest, parses the candidate
 as a GeoLite2 City MMDB, checks its embedded build time, and rejects stale data
-or a rollback. The private candidate is created beside the active database and
-replaced atomically only after every check passes. Any metadata, HTTP, digest,
-parse, or activation failure preserves the previous database. An identical
-release is a successful no-change result.
+or a rollback. The private candidate is moved to an immutable digest-named path
+only after every check passes. A temporary provenance file is then renamed
+atomically to select that matching database and metadata together. An
+interruption before the pointer rename leaves the previous pair selected; any
+metadata, HTTP, digest, parse, or activation failure therefore preserves the
+last known-good database. An identical release is a successful no-change
+result. Setup and timer runs hold an exclusive update lock, so their rollback
+checks and activation cannot interleave. Inactive managed database revisions
+are removed by subsequent maintenance.
 
 Private provenance is recorded beside the database at
 `$XDG_DATA_HOME/egress-geo/provenance.json`, or

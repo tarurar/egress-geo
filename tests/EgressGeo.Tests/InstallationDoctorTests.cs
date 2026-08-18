@@ -149,7 +149,7 @@ public sealed class InstallationDoctorTests
                 DoctorCheckStatus.Failed,
                 "database",
                 "readable but stale; 31 days old " +
-                "(built 2026-07-17 UTC)"),
+                "(built 2026-07-17 UTC); run: geo setup"),
             FindCheck(report, "database"));
     }
 
@@ -397,8 +397,7 @@ public sealed class InstallationDoctorTests
                 SHA256.HashData("database"u8));
             GeoLiteProvenanceFile.Write(
                     Paths.ProvenancePath,
-                    new GeoLiteProvenance(
-                        "P3TERX/GeoLite.mmdb",
+                    GeoLiteTestData.Provenance(
                         "2026.08.15",
                         CurrentTime - TimeSpan.FromDays(2),
                         new Uri(

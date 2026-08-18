@@ -2,8 +2,8 @@ using EgressGeo;
 
 using var httpClient = new HttpClient();
 using var geoLiteHttpClient = new HttpClient();
-using var database = new MaxMindGeolocationDatabase(
-    UserDataPaths.GetDatabasePath());
+var databasePath = UserDataPaths.GetDatabasePath();
+using var database = new MaxMindGeolocationDatabase(databasePath);
 var cache = new FileEgressSnapshotCache(UserDataPaths.GetCachePath());
 var publicIp = new PublicIpHttpClient(httpClient);
 var timeProvider = TimeProvider.System;
@@ -15,7 +15,7 @@ var updater = new GeoLiteDatabaseUpdater(
     geoLiteSource,
     timeProvider);
 var doctor = new InstallationDoctor(
-    UserDataPaths.GetDoctorPaths(),
+    UserDataPaths.GetDoctorPaths(databasePath),
     publicIp,
     database,
     cache,
