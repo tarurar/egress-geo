@@ -196,11 +196,13 @@ Use `--json` for the stable machine-readable form:
 mismatch adds `possible-vpn-leak` to `warnings`. Fully live results set
 `cached` to `false` and `cacheAgeSeconds` to `null`; exact-address location
 reuse and cached-only fallback set `cached` to `true` and report the snapshot
-age. New discoveries record `discoverySource` as `deSEC` for primary success or
-`Joker` for fallback success. Snapshots from older versions with `ipify` or
-`ident.me` remain readable until their normal 24-hour expiry. The `families`
-array contains one entry per discovered or cached address; unavailable city or
-country values are explicit JSON `null` values.
+age. A missing, unreadable, or stale database still produces this JSON contract
+with `status` set to `failed` and an empty `families` array; exit `1` and stderr
+provide the `geo setup` remediation. New discoveries record `discoverySource`
+as `deSEC` for primary success or `Joker` for fallback success. Snapshots from
+older versions with `ipify` or `ident.me` remain readable until their normal
+24-hour expiry. The `families` array contains one entry per discovered or cached
+address; unavailable city or country values are explicit JSON `null` values.
 
 A production GeoLite database and MaxMind credentials must never be added to
 this repository.

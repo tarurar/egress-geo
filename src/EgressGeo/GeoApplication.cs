@@ -67,7 +67,8 @@ public sealed class GeoApplication
         var geolocationAvailable = IsGeolocationUsable(currentTime);
         if (!geolocationAvailable)
         {
-            return await Write(HumanLookupOutput.MissingDatabase());
+            return await Write(
+                RenderMissingDatabase(currentTime, outputFormat));
         }
 
         using var liveDeadline = new CancellationTokenSource(
@@ -241,6 +242,22 @@ public sealed class GeoApplication
             _ => throw new InvalidOperationException(
                 $"Unknown lookup output format: {outputFormat}"),
         };
+
+    private static CommandResult RenderMissingDatabase(
+        DateTimeOffset observedAt,
+        LookupOutputFormat outputFormat)
+    {
+        var unavailable = new LookupOutcome.DatabaseUnavailable(null);
+        var outcome = new LookupResult(
+            observedAt,
+            unavailable,
+            unavailable,
+            new CacheUsage.None());
+        return Render(outcome, outputFormat) with
+        {
+            Error = HumanLookupOutput.MissingDatabase().Error,
+        };
+    }
 
     private bool IsGeolocationUsable(DateTimeOffset currentTime) =>
         dependencies.Geolocation.IsAvailable &&

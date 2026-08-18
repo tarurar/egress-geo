@@ -870,6 +870,45 @@ public sealed class GeoApplicationTests
     }
 
     [TestMethod]
+    public async Task Json_lookup_reports_unavailable_database_without_discovery()
+    {
+        var currentTime = new DateTimeOffset(
+            2026,
+            8,
+            18,
+            0,
+            0,
+            0,
+            TimeSpan.Zero);
+        var publicIp = new RecordingUnavailablePublicIpClient();
+
+        var result = await RunApplication(
+            ["--json"],
+            publicIp,
+            new UnavailableGeolocationDatabase(),
+            new FakeTimeProvider(currentTime));
+
+        Assert.IsFalse(publicIp.WasRequested);
+        Assert.AreEqual(1, result.ExitCode);
+        Assert.AreEqual(
+            "GeoLite2 City database is missing, unreadable, or stale.\n" +
+            "Run: geo setup\n",
+            result.Error);
+        using var document = JsonDocument.Parse(result.Output);
+        var root = document.RootElement;
+        Assert.AreEqual("failed", root.GetProperty("status").GetString());
+        Assert.AreEqual(
+            currentTime,
+            root.GetProperty("observedAt").GetDateTimeOffset());
+        Assert.IsFalse(root.GetProperty("cached").GetBoolean());
+        Assert.AreEqual(
+            JsonValueKind.Null,
+            root.GetProperty("cacheAgeSeconds").ValueKind);
+        Assert.AreEqual(0, root.GetProperty("warnings").GetArrayLength());
+        Assert.AreEqual(0, root.GetProperty("families").GetArrayLength());
+    }
+
+    [TestMethod]
     public async Task Lookup_rejects_a_stale_database_before_discovery()
     {
         var currentTime = new DateTimeOffset(
