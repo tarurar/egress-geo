@@ -88,7 +88,7 @@ metadata, HTTP, digest, parse, or activation failure therefore preserves the
 last known-good database. An identical release is a successful no-change
 result. Setup and timer runs hold an exclusive update lock, so their rollback
 checks and activation cannot interleave. Inactive managed database revisions
-are removed by subsequent maintenance.
+are removed by subsequent maintenance after a one-hour reader grace period.
 
 Private provenance is recorded beside the database at
 `$XDG_DATA_HOME/egress-geo/provenance.json`, or

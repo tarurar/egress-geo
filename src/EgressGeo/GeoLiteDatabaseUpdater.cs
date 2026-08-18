@@ -47,7 +47,7 @@ internal sealed class GeoLiteDatabaseUpdater : IGeoLiteDatabaseUpdater
                 return Failed("another GeoLite update is already running");
             }
 
-            installation.RemoveInactiveDatabases();
+            installation.RemoveInactiveDatabases(timeProvider.GetUtcNow());
             var resolution = await source.ResolveLatest(cancellationToken);
             return resolution is GeoLiteReleaseResolution.Found found
                 ? await Acquire(found.Release, cancellationToken)
@@ -142,11 +142,15 @@ internal sealed class GeoLiteDatabaseUpdater : IGeoLiteDatabaseUpdater
             return new GeoLiteUpdateResult.NoChange(active.Provenance);
         }
 
+        if (!isNoChange && active is not null)
+        {
+            installation.RetainForReaders(active, currentTime);
+        }
+
         await installation.Activate(
             candidatePath,
             provenance,
             cancellationToken);
-        installation.RemoveInactiveDatabases();
         return isNoChange
             ? new GeoLiteUpdateResult.NoChange(provenance)
             : new GeoLiteUpdateResult.Activated(provenance);

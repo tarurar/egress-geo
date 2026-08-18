@@ -199,7 +199,9 @@ public sealed class GeoLiteDatabaseUpdaterTests
                 environment.Paths.ProvenancePath,
                 CancellationToken.None));
         Assert.AreEqual(database.Length, activeHandle.Length);
-        Assert.IsFalse(File.Exists(environment.Paths.LegacyDatabasePath));
+        Assert.IsTrue(
+            File.Exists(environment.Paths.LegacyDatabasePath),
+            "Migration must retain a path that an active reader opened.");
         CollectionAssert.AreEqual(
             database,
             await File.ReadAllBytesAsync(
@@ -380,6 +382,64 @@ public sealed class GeoLiteDatabaseUpdaterTests
         Assert.AreEqual(0, source.ResolveCalls);
         Assert.IsFalse(File.Exists(environment.Paths.LegacyDatabasePath));
         Assert.IsFalse(File.Exists(environment.Paths.ProvenancePath));
+    }
+
+    [TestMethod]
+    public async Task Activation_retains_previous_revision_for_active_readers()
+    {
+        using var environment = new UpdateTestEnvironment();
+        var previousBuildTime = new DateTimeOffset(
+            2026,
+            8,
+            16,
+            0,
+            0,
+            0,
+            TimeSpan.Zero);
+        var candidateBuildTime = previousBuildTime + TimeSpan.FromDays(1);
+        var previousDatabase = new byte[] { 9, 8, 7 };
+        var candidateDatabase = new byte[] { 1, 2, 3 };
+        var previousRelease = CreateRelease(
+            previousBuildTime,
+            previousDatabase);
+        var candidateRelease = CreateRelease(
+            candidateBuildTime,
+            candidateDatabase);
+        var previousPath = environment.Paths.ManagedDatabasePath(
+            previousRelease.Digest);
+        Directory.CreateDirectory(environment.Paths.DatabaseDirectory);
+        await File.WriteAllBytesAsync(previousPath, previousDatabase);
+        await GeoLiteProvenanceFile.Write(
+            environment.Paths.ProvenancePath,
+            GeoLiteProvenance.Create(
+                previousRelease,
+                previousBuildTime,
+                candidateBuildTime)!,
+            CancellationToken.None);
+        var updater = new GeoLiteDatabaseUpdater(
+            environment.Paths,
+            new FakeGeoLiteReleaseSource(
+                candidateRelease,
+                candidateDatabase),
+            new FakeGeoLiteDatabaseInspector(
+                previousPath,
+                previousBuildTime,
+                candidateBuildTime),
+            new FakeTimeProvider(candidateBuildTime + TimeSpan.FromDays(1)));
+
+        var result = await updater.Update(CancellationToken.None);
+
+        Assert.IsInstanceOfType<GeoLiteUpdateResult.Activated>(result);
+        Assert.IsTrue(
+            File.Exists(previousPath),
+            "A reader may still be opening the previously selected path.");
+        Assert.IsTrue(
+            File.Exists(
+                environment.Paths.ManagedDatabasePath(
+                    candidateRelease.Digest)));
+        Assert.AreEqual(
+            (candidateBuildTime + TimeSpan.FromDays(1)).UtcDateTime,
+            File.GetLastWriteTimeUtc(previousPath));
     }
 
     private static string FixturePath => Path.Combine(

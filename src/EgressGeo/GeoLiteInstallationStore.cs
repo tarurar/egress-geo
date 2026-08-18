@@ -2,6 +2,7 @@ namespace EgressGeo;
 
 internal sealed class GeoLiteInstallationStore
 {
+    private static readonly TimeSpan ReaderRetention = TimeSpan.FromHours(1);
     private readonly GeoLiteUpdatePaths paths;
 
     internal GeoLiteInstallationStore(GeoLiteUpdatePaths paths)
@@ -115,7 +116,14 @@ internal sealed class GeoLiteInstallationStore
         }
     }
 
-    internal void RemoveInactiveDatabases()
+    internal void RetainForReaders(
+        ActiveDatabase active,
+        DateTimeOffset deactivatedAt) =>
+        File.SetLastWriteTimeUtc(
+            active.DatabasePath,
+            deactivatedAt.UtcDateTime);
+
+    internal void RemoveInactiveDatabases(DateTimeOffset currentTime)
     {
         var provenance = ReadProvenance();
         if (provenance is null || !Directory.Exists(paths.DatabaseDirectory))
@@ -129,7 +137,8 @@ internal sealed class GeoLiteInstallationStore
             return;
         }
 
-        TryDelete(paths.LegacyDatabasePath);
+        var deleteBefore = currentTime - ReaderRetention;
+        TryDeleteExpired(paths.LegacyDatabasePath, deleteBefore);
         try
         {
             foreach (var path in Directory.EnumerateFiles(
@@ -143,7 +152,7 @@ internal sealed class GeoLiteInstallationStore
                         StringComparison.Ordinal) &&
                     IsManagedDatabaseName(Path.GetFileName(path)))
                 {
-                    TryDelete(path);
+                    TryDeleteExpired(path, deleteBefore);
                 }
             }
         }
@@ -193,11 +202,16 @@ internal sealed class GeoLiteInstallationStore
         digest.All(character =>
             character is >= '0' and <= '9' or >= 'a' and <= 'f');
 
-    private static void TryDelete(string path)
+    private static void TryDeleteExpired(
+        string path,
+        DateTimeOffset deleteBefore)
     {
         try
         {
-            File.Delete(path);
+            if (File.GetLastWriteTimeUtc(path) <= deleteBefore.UtcDateTime)
+            {
+                File.Delete(path);
+            }
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException)

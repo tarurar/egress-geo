@@ -188,8 +188,9 @@ public sealed class InstallationDoctor : IInstallationDoctor
                     "activation time is in the future; run: geo setup");
             }
 
+            var databasePath = ProvenanceDatabasePath(provenance);
             var digest = await GeoLiteDigest.Compute(
-                paths.DatabasePath,
+                databasePath,
                 cancellationToken);
             return string.Equals(
                     digest,
@@ -256,6 +257,15 @@ public sealed class InstallationDoctor : IInstallationDoctor
                 "GeoLite source",
                 "P3TERX release source is unreachable");
         }
+    }
+
+    private string ProvenanceDatabasePath(GeoLiteProvenance provenance)
+    {
+        var dataDirectory = Path.GetDirectoryName(paths.ProvenancePath) ??
+            throw new InvalidOperationException(
+                "The provenance path must have a parent directory.");
+        return new GeoLiteUpdatePaths(dataDirectory)
+            .ManagedDatabasePath(provenance.Digest);
     }
 
     private async ValueTask<DoctorCheck> CheckTimer(

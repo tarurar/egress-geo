@@ -70,6 +70,32 @@ public sealed class InstallationDoctorTests
     }
 
     [TestMethod]
+    public async Task Provenance_check_uses_the_pair_selected_during_diagnosis()
+    {
+        using var environment = new DoctorTestEnvironment();
+        environment.CreateHealthyFiles();
+        var buildTime = CurrentTime - TimeSpan.FromDays(1);
+        await environment.CommitManagedDatabase(
+            "2026.08.16",
+            buildTime + TimeSpan.FromHours(1),
+            buildTime,
+            CurrentTime - TimeSpan.FromHours(1),
+            "new database"u8.ToArray());
+        var doctor = environment.CreateDoctor(
+            databaseBuildTime: CurrentTime - TimeSpan.FromDays(2),
+            snapshot: Snapshot(CurrentTime - TimeSpan.FromHours(1)));
+
+        var report = await doctor.Examine(CancellationToken.None);
+
+        Assert.AreEqual(
+            new DoctorCheck(
+                DoctorCheckStatus.Healthy,
+                "provenance",
+                "P3TERX release 2026.08.16; digest verified"),
+            FindCheck(report, "provenance"));
+    }
+
+    [TestMethod]
     public async Task Missing_database_fails_without_stopping_other_checks()
     {
         using var environment = new DoctorTestEnvironment();
@@ -356,18 +382,19 @@ public sealed class InstallationDoctorTests
 
         internal DoctorTestEnvironment()
         {
+            var dataDirectory = Path.Combine(
+                rootPath,
+                "data",
+                "egress-geo");
+            var databaseDigest = Convert.ToHexStringLower(
+                SHA256.HashData("database"u8));
             Paths = new DoctorPaths(
-                Path.Combine(rootPath, "data", "egress-geo", "app", "geo"),
+                Path.Combine(dataDirectory, "app", "geo"),
                 Path.Combine(
-                    rootPath,
-                    "data",
-                    "egress-geo",
-                    "GeoLite2-City.mmdb"),
-                Path.Combine(
-                    rootPath,
-                    "data",
-                    "egress-geo",
-                    "provenance.json"),
+                    dataDirectory,
+                    "databases",
+                    databaseDigest + ".mmdb"),
+                Path.Combine(dataDirectory, "provenance.json"),
                 Path.Combine(
                     rootPath,
                     "config",
@@ -414,6 +441,43 @@ public sealed class InstallationDoctorTests
             WriteFile(Paths.UpdateServicePath, "service");
             WriteFile(Paths.UpdateTimerPath, "timer");
             WriteFile(Paths.CachePath, "cache");
+        }
+
+        internal async Task CommitManagedDatabase(
+            string releaseTag,
+            DateTimeOffset publishedAt,
+            DateTimeOffset buildTime,
+            DateTimeOffset activatedAt,
+            byte[] database)
+        {
+            var dataDirectory = Path.GetDirectoryName(Paths.ProvenancePath)!;
+            var updatePaths = new GeoLiteUpdatePaths(dataDirectory);
+            var digest = "sha256:" + Convert.ToHexStringLower(
+                SHA256.HashData(database));
+            var provenance = GeoLiteTestData.Provenance(
+                releaseTag,
+                publishedAt,
+                new Uri(
+                    "https://github.com/P3TERX/GeoLite.mmdb/" +
+                    $"releases/download/{releaseTag}/GeoLite2-City.mmdb"),
+                digest,
+                buildTime,
+                activatedAt);
+            Directory.CreateDirectory(updatePaths.DatabaseDirectory);
+            await File.WriteAllBytesAsync(
+                updatePaths.ManagedDatabasePath(digest),
+                database);
+            var temporaryProvenance = Path.Combine(
+                dataDirectory,
+                ".provenance.test.tmp");
+            await GeoLiteProvenanceFile.Write(
+                temporaryProvenance,
+                provenance,
+                CancellationToken.None);
+            File.Move(
+                temporaryProvenance,
+                Paths.ProvenancePath,
+                overwrite: true);
         }
 
         internal InstallationDoctor CreateDoctor(
