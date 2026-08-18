@@ -109,6 +109,16 @@ Failed and no-change runs preserve the current database. Journal output contains
 only generic start, no-change, success, or failure boundaries; Release API
 bodies and asset URLs are not logged.
 
+### Migrating an older installation
+
+Re-run `./scripts/install.sh`, then run `geo setup`. Repair installation
+replaces the user-systemd units so scheduled maintenance uses the
+credential-free P3TERX path. The application ignores existing `GeoIP.conf` and
+`geoipupdate` data but leaves it untouched. A legacy flat
+`GeoLite2-City.mmdb` remains available to existing readers until setup activates
+the verified digest-named database. Run `geo doctor` after setup to verify the
+database, provenance, source, timer, cache, and endpoint state together.
+
 Inspect the complete installed system with:
 
 ```console
@@ -140,6 +150,13 @@ preserves the database, provenance, cache, and any legacy `GeoIP.conf` or
 that retained user configuration, data, and cache; purge proceeds only after
 `PURGE` is entered exactly. Installation, uninstall, and purge require no
 `sudo` and are safe to repeat.
+
+## CLI and exit contracts
+
+Run `geo` for human-readable output or `geo --json` for the stable machine
+contract. `geo setup` installs or updates the database, `geo doctor` checks the
+complete installation, and `geo --help` and `geo --version` expose the command
+contract and installed version.
 
 When both families resolve to the same city and country, human output shares
 one location line. Different cities receive separate family rows. Different

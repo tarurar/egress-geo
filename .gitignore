@@ -11,6 +11,7 @@ TestResults/
 # IDE-local state
 .vs/
 .idea/
+.scratch/
 *.suo
 *.user
 
